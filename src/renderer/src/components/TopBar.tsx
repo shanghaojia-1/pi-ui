@@ -2,24 +2,25 @@ import type { AppSnapshot, RunState, ThinkingLevel } from '@shared/contracts'
 import { LoaderCircle, PanelLeft, PanelRight, Shield, ShieldAlert, TriangleAlert } from 'lucide-react'
 import Select, { type SelectOption } from './Select'
 import { formatTokens } from '../lib/format'
+import { useI18n } from '../lib/i18n'
 
-const RUN_META: Record<RunState, { label: string }> = {
-  idle: { label: '就绪' },
-  running: { label: '运行中' },
-  retrying: { label: '重试中' },
-  compacting: { label: '压缩中' },
-  error: { label: '出错' },
+const RUN_META: Record<RunState, { labelKey: string }> = {
+  idle: { labelKey: 'app.status.ready' },
+  running: { labelKey: 'app.status.working' },
+  retrying: { labelKey: 'app.status.retrying' },
+  compacting: { labelKey: 'app.status.compacting' },
+  error: { labelKey: 'topbar.error' },
 }
 
-const THINKING_OPTIONS: SelectOption[] = [
-  { value: 'off', label: '关闭' },
-  { value: 'minimal', label: '最低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '很高' },
-  { value: 'max', label: '最高' },
-]
+const THINKING_KEYS: Record<string, string> = {
+  off: 'topbar.thinking.off',
+  minimal: 'topbar.thinking.minimal',
+  low: 'topbar.thinking.low',
+  medium: 'topbar.thinking.medium',
+  high: 'topbar.thinking.high',
+  xhigh: 'topbar.thinking.xhigh',
+  max: 'topbar.thinking.max',
+}
 
 interface TopBarProps {
   snapshot: AppSnapshot | null
@@ -42,12 +43,15 @@ export default function TopBar({
   onSetThinking,
   onOpenApproval,
 }: TopBarProps) {
+  const { t } = useI18n()
   const runState = snapshot?.runState ?? 'idle'
   const runMeta = RUN_META[runState]
+  const runMetaLabel = t(runMeta.labelKey)
   const runCls = runState === 'idle' ? 'run-idle' : runState === 'error' ? 'run-error' : 'run-running'
   const workspace = snapshot?.workspace ?? null
   const models = snapshot?.models ?? []
   const activeModel = snapshot?.activeModel ?? null
+  const thinkingOptions: SelectOption[] = Object.entries(THINKING_KEYS).map(([value, key]) => ({ value, label: t(key) }))
   const modelOptions: SelectOption[] = models.map((m) => ({
     value: `${m.provider}:${m.id}`,
     label: m.name,
@@ -66,16 +70,16 @@ export default function TopBar({
           type="button"
           className="btn-icon"
           onClick={onToggleSidebar}
-          aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'}
+          aria-label={sidebarOpen ? t('topbar.collapseSidebar') : t('topbar.expandSidebar')}
           aria-pressed={sidebarOpen}
         >
           <PanelLeft size={15} aria-hidden="true" />
         </button>
         <div className={`run-pill ${runCls}`} role="status">
           <span className="run-dot" aria-hidden="true" />
-          <span>{runMeta.label}</span>
+          <span>{runMetaLabel}</span>
           {snapshot !== null && snapshot.queueCount > 0 ? (
-            <span className="queue-badge">+{snapshot.queueCount} 排队</span>
+            <span className="queue-badge">+{snapshot.queueCount} {t('topbar.queueBadge')}</span>
           ) : null}
           {runState === 'running' ? <LoaderCircle size={12} className="run-spin" aria-hidden="true" /> : null}
         </div>
@@ -86,21 +90,21 @@ export default function TopBar({
           type="button"
           className="btn-icon"
           onClick={onToggleRight}
-          aria-label={rightOpen ? '收起活动面板' : '展开活动面板'}
+          aria-label={rightOpen ? t('topbar.collapsePanel') : t('topbar.expandPanel')}
           aria-pressed={rightOpen}
         >
           <PanelRight size={15} aria-hidden="true" />
         </button>
         <Select
-          label="思考"
+          label={t('topbar.thinkingLabel')}
           value={snapshot?.thinkingLevel ?? 'medium'}
-          options={THINKING_OPTIONS}
+          options={thinkingOptions}
           onChange={(v) => onSetThinking(v as ThinkingLevel)}
           disabled={!workspace}
           width={104}
         />
         <Select
-          label="模型"
+          label={t('topbar.modelLabel')}
           value={hasModelSelection ? activeModel : null}
           options={modelOptions}
           onChange={(v) => {
@@ -109,10 +113,10 @@ export default function TopBar({
           }}
           disabled={!workspace || models.length === 0}
           width={210}
-          placeholder={models.length === 0 ? '无可用模型' : '选择模型'}
+          placeholder={models.length === 0 ? t('topbar.noModel') : t('topbar.selectModel')}
         />
         {models.length === 0 && workspace ? (
-          <TriangleAlert size={14} className="topbar-warn" aria-label="未找到可用模型" />
+          <TriangleAlert size={14} className="topbar-warn" aria-label={t('app.noModels.title')} />
         ) : null}
         <button
           type="button"
@@ -120,17 +124,17 @@ export default function TopBar({
           onClick={onOpenApproval}
           aria-label={
             approvalMode === 'managed'
-              ? '工具审批：全托管 · 非沙箱，点击打开设置'
-              : '工具审批：逐次确认，点击打开设置'
+              ? `${t('topbar.approval')}：${t('topbar.approval.managed')}`
+              : `${t('topbar.approval')}：${t('topbar.approval.ask')}`
           }
-          title={approvalMode === 'managed' ? '全托管 · 非沙箱 — 点击打开设置' : '逐次确认 — 点击打开设置'}
+          title={approvalMode === 'managed' ? `${t('topbar.approval.managed')} — ${t('topbar.approval')}` : `${t('topbar.approval.ask')} — ${t('topbar.approval')}`}
         >
           {approvalMode === 'managed' ? (
             <ShieldAlert size={13} className="approval-icon" aria-hidden="true" />
           ) : (
             <Shield size={13} className="approval-icon" aria-hidden="true" />
           )}
-          <span className="approval-label">{approvalMode === 'managed' ? '全托管 · 非沙箱' : '逐次确认'}</span>
+          <span className="approval-label">{approvalMode === 'managed' ? t('topbar.approval.managed') : t('topbar.approval.ask')}</span>
         </button>
       </div>
     </header>

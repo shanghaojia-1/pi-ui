@@ -5,6 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { AppSnapshot } from '../../src/shared/contracts'
 import TopBar from '../../src/renderer/src/components/TopBar'
+import { I18nProvider } from '../../src/renderer/src/lib/i18n'
+import { type ReactElement } from 'react'
+
+function renderI18n(ui: ReactElement) {
+  return render(<I18nProvider initialLang="zh">{ui}</I18nProvider>)
+}
 
 const base: AppSnapshot = {
   workspace: { path: '/tmp/ws', name: 'ws' },
@@ -34,16 +40,18 @@ const onOpenApproval = vi.fn()
 
 function renderTopBar(snapshot: AppSnapshot | null): void {
   render(
-    <TopBar
-      snapshot={snapshot}
-      sidebarOpen
-      rightOpen
-      onToggleSidebar={() => {}}
-      onToggleRight={() => {}}
-      onSetModel={() => {}}
-      onSetThinking={() => {}}
-      onOpenApproval={onOpenApproval}
-    />,
+    <I18nProvider initialLang="zh">
+      <TopBar
+        snapshot={snapshot}
+        sidebarOpen
+        rightOpen
+        onToggleSidebar={() => {}}
+        onToggleRight={() => {}}
+        onSetModel={() => {}}
+        onSetThinking={() => {}}
+        onOpenApproval={onOpenApproval}
+      />
+    </I18nProvider>,
   )
 }
 
@@ -92,6 +100,7 @@ describe('TopBar tool-approval badge', () => {
 
   it('badge state follows the snapshot immediately (ask → managed → ask)', () => {
     const { rerender } = render(
+      <I18nProvider initialLang="zh">
       <TopBar
         snapshot={{ ...base, toolApprovalMode: 'ask' }}
         sidebarOpen
@@ -101,33 +110,38 @@ describe('TopBar tool-approval badge', () => {
         onSetModel={() => {}}
         onSetThinking={() => {}}
         onOpenApproval={onOpenApproval}
-      />,
+      />
+      </I18nProvider>,
     )
     expect(screen.getByRole('button', { name: /工具审批/ }).className).toContain('approval-badge-ask')
     rerender(
-      <TopBar
-        snapshot={{ ...base, toolApprovalMode: 'managed' }}
-        sidebarOpen
-        rightOpen
-        onToggleSidebar={() => {}}
-        onToggleRight={() => {}}
-        onSetModel={() => {}}
-        onSetThinking={() => {}}
-        onOpenApproval={onOpenApproval}
-      />,
+      <I18nProvider initialLang="zh">
+        <TopBar
+          snapshot={{ ...base, toolApprovalMode: 'managed' }}
+          sidebarOpen
+          rightOpen
+          onToggleSidebar={() => {}}
+          onToggleRight={() => {}}
+          onSetModel={() => {}}
+          onSetThinking={() => {}}
+          onOpenApproval={onOpenApproval}
+        />
+      </I18nProvider>,
     )
     expect(screen.getByRole('button', { name: /工具审批/ }).className).toContain('approval-badge-managed')
     rerender(
-      <TopBar
-        snapshot={{ ...base, toolApprovalMode: 'ask' }}
-        sidebarOpen
-        rightOpen
-        onToggleSidebar={() => {}}
-        onToggleRight={() => {}}
-        onSetModel={() => {}}
-        onSetThinking={() => {}}
-        onOpenApproval={onOpenApproval}
-      />,
+      <I18nProvider initialLang="zh">
+        <TopBar
+          snapshot={{ ...base, toolApprovalMode: 'ask' }}
+          sidebarOpen
+          rightOpen
+          onToggleSidebar={() => {}}
+          onToggleRight={() => {}}
+          onSetModel={() => {}}
+          onSetThinking={() => {}}
+          onOpenApproval={onOpenApproval}
+        />
+      </I18nProvider>,
     )
     expect(screen.getByRole('button', { name: /工具审批/ }).className).toContain('approval-badge-ask')
   })

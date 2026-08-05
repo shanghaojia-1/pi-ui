@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
 import { Check, Copy, TriangleAlert, X } from 'lucide-react'
+import { useI18n } from '../lib/i18n'
 
 /**
  * Safe Markdown renderer for chat messages.
@@ -59,13 +60,8 @@ function textOf(node: ReactNode): string {
 
 type CopyState = 'idle' | 'ok' | 'error'
 
-const COPY_FEEDBACK: Record<CopyState, string> = {
-  idle: '复制',
-  ok: '已复制',
-  error: '复制失败',
-}
-
 function CodeBlock({ language, text, children }: { language?: string | undefined; text: string; children: ReactNode }) {
+  const { t } = useI18n()
   const [state, setState] = useState<CopyState>('idle')
   const timerRef = useRef<number | undefined>(undefined)
   const mountedRef = useRef(true)
@@ -148,7 +144,7 @@ function CodeBlock({ language, text, children }: { language?: string | undefined
           className="codeblock-copy"
           data-state={state}
           onClick={() => void onCopy()}
-          aria-label={state === 'ok' ? '已复制到剪贴板' : state === 'error' ? '复制失败' : '复制代码'}
+          aria-label={state === 'ok' ? t('markdown.codeCopied') : state === 'error' ? t('markdown.copyFailed') : t('markdown.copyCode')}
         >
           {state === 'ok' ? (
             <Check size={12} aria-hidden="true" />
@@ -157,10 +153,10 @@ function CodeBlock({ language, text, children }: { language?: string | undefined
           ) : (
             <Copy size={12} aria-hidden="true" />
           )}
-          <span>{COPY_FEEDBACK[state]}</span>
+          <span>{state === 'idle' ? t('markdown.copyCode') : state === 'ok' ? t('markdown.codeCopied') : t('markdown.copyFailed')}</span>
         </button>
         <span className="codeblock-live" role="status" aria-live="polite">
-          {state === 'ok' ? '代码已复制到剪贴板' : state === 'error' ? '复制失败，请手动选择复制' : ''}
+          {state === 'ok' ? t('markdown.codeCopiedLive') : state === 'error' ? t('markdown.copyFailedLive') : ''}
         </span>
       </div>
       <pre className="codeblock-pre">{children}</pre>
@@ -174,6 +170,7 @@ interface MarkdownProps {
 }
 
 function Markdown({ text, className }: MarkdownProps) {
+  const { t } = useI18n()
   return (
     <div className={className ? `md ${className}` : 'md'}>
       <ReactMarkdown
@@ -183,7 +180,7 @@ function Markdown({ text, className }: MarkdownProps) {
           a({ node: _node, href, children, ...rest }) {
             if (!isSafeHref(href)) {
               return (
-                <span className="md-link-disabled" title="不允许打开的链接">
+                <span className="md-link-disabled" title={t('markdown.blockedLink')}>
                   {children}
                 </span>
               )
@@ -199,8 +196,8 @@ function Markdown({ text, className }: MarkdownProps) {
           img({ node: _node, src, alt, ...rest }) {
             if (!isSafeHref(src)) {
               return (
-                <span className="md-img-disabled" title="不允许加载的图片">
-                  {alt ?? '图片'}
+                <span className="md-img-disabled" title={t('markdown.blockedImage')}>
+                  {alt ?? t('markdown.image')}
                 </span>
               )
             }

@@ -1,41 +1,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { LoaderCircle, LogOut, RefreshCw, RotateCcw, Search, TriangleAlert, X } from 'lucide-react'
+import { LoaderCircle, LogOut, Plus, RefreshCw, RotateCcw, Search, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
+  CustomProviderApi,
   ProviderStatus,
   SettingsPatch,
   SettingsSnapshot,
   ThinkingLevel,
   ToolApprovalMode,
 } from '@shared/contracts'
-import { HTTP_IDLE_TIMEOUT_MAX_MS, HTTP_IDLE_TIMEOUT_MIN_MS } from '../../../shared/contracts'
+import { CUSTOM_PROVIDER_APIS, HTTP_IDLE_TIMEOUT_MAX_MS, HTTP_IDLE_TIMEOUT_MIN_MS } from '../../../shared/contracts'
 import { errorMessage } from '../hooks'
 import { formatDuration, formatTokens } from '../lib/format'
+import { useI18n } from '../lib/i18n'
+import { THEMES, useTheme, type ThemeId } from '../lib/theme'
 
-const AUTH_LABELS: Record<ProviderStatus['authStatus'], string> = {
-  stored: '已存储',
-  runtime: '仅本次运行',
-  environment: '环境变量',
-  fallback: '回退配置',
-  'models-json': 'models.json',
-  none: '未配置',
-  error: '鉴权异常',
+const AUTH_KEYS: Record<ProviderStatus['authStatus'], string> = {
+  stored: 'settings.auth.stored',
+  runtime: 'settings.auth.runtime',
+  environment: 'settings.auth.environment',
+  fallback: 'settings.auth.fallback',
+  'models-json': 'settings.auth.modelsJson',
+  none: 'settings.auth.none',
+  error: 'settings.auth.error',
 }
 
-const THINKING_OPTIONS: { value: ThinkingLevel; label: string }[] = [
-  { value: 'off', label: '关闭' },
-  { value: 'minimal', label: '最低' },
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '很高' },
-  { value: 'max', label: '最高' },
+const THINKING_KEYS: { value: ThinkingLevel; labelKey: string }[] = [
+  { value: 'off', labelKey: 'topbar.thinking.off' },
+  { value: 'minimal', labelKey: 'topbar.thinking.minimal' },
+  { value: 'low', labelKey: 'topbar.thinking.low' },
+  { value: 'medium', labelKey: 'topbar.thinking.medium' },
+  { value: 'high', labelKey: 'topbar.thinking.high' },
+  { value: 'xhigh', labelKey: 'topbar.thinking.xhigh' },
+  { value: 'max', labelKey: 'topbar.thinking.max' },
 ]
 
 const TIMEOUT_MIN_S = HTTP_IDLE_TIMEOUT_MIN_MS / 1000
 const TIMEOUT_MAX_S = HTTP_IDLE_TIMEOUT_MAX_MS / 1000
 
-type BusyAction = 'key' | 'logout' | 'refresh' | 'save' | 'approval' | null
+type BusyAction = 'key' | 'logout' | 'refresh' | 'save' | 'approval' | 'custom' | null
 
 interface LiveMessage {
   kind: 'success' | 'error' | 'info'
@@ -56,6 +59,8 @@ interface SettingsPanelProps {
  * sent over IPC and never written to storage or the URL.
  */
 export default function SettingsPanel({ snapshot, onClose, initialSection }: SettingsPanelProps) {
+  const { t, lang, setLang } = useI18n()
+  const { theme, setTheme } = useTheme()
   const [phase, setPhase] = useState<'loading' | 'error' | 'ready'>('loading')
   const [loadMessage, setLoadMessage] = useState('')
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
@@ -78,6 +83,15 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [providerQuery, setProviderQuery] = useState('')
+  // Custom-provider form (adds a provider to the agent's models.json).
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customId, setCustomId] = useState('')
+  const [customName, setCustomName] = useState('')
+  const [customBaseUrl, setCustomBaseUrl] = useState('')
+  const [customApi, setCustomApi] = useState<CustomProviderApi>('openai-completions')
+  const [customApiKey, setCustomApiKey] = useState('')
+  const [customModels, setCustomModels] = useState('')
+  const [customImage, setCustomImage] = useState(false)
 
   const sheetRef = useRef<HTMLElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -180,7 +194,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     // Clear the secret immediately — success, settings-error and rejection alike.
     setApiKey('')
     setBusy('key')
-    setLive({ kind: 'info', text: '正在设置 API Key…' })
+    setLive({ kind: 'info', text: t('settings.keySetting') })
     setConfirmLogout(false)
     try {
       const s = await window.pi.setRuntimeApiKey(providerId, key)
@@ -188,7 +202,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       if (s.error !== null) {
         setLive({ kind: 'error', text: s.error.message })
       } else {
-        setLive({ kind: 'success', text: 'API Key 已设置（仅本次运行，关闭应用后失效）' })
+        setLive({ kind: 'success', text: t('settings.keySuccess') })
       }
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
@@ -204,12 +218,12 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       return
     }
     setBusy('logout')
-    setLive({ kind: 'info', text: '正在退出登录…' })
+    setLive({ kind: 'info', text: t('settings.loggingOut') })
     try {
       const s = await window.pi.logoutProvider(selectedProvider)
       setSettings(s)
       setConfirmLogout(false)
-      setLive(s.error !== null ? { kind: 'error', text: s.error.message } : { kind: 'success', text: '已退出登录' })
+      setLive(s.error !== null ? { kind: 'error', text: s.error.message } : { kind: 'success', text: t('settings.loggedOut') })
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
     } finally {
@@ -220,11 +234,73 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const refresh = async (): Promise<void> => {
     if (anyBusy) return
     setBusy('refresh')
-    setLive({ kind: 'info', text: '正在刷新模型列表…' })
+    setLive({ kind: 'info', text: t('settings.refreshingModels') })
     try {
       const s = await window.pi.refreshModels()
       setSettings(s)
-      setLive(s.error !== null ? { kind: 'error', text: s.error.message } : { kind: 'success', text: '模型列表已刷新' })
+      setLive(s.error !== null ? { kind: 'error', text: s.error.message } : { kind: 'success', text: t('settings.modelsRefreshed') })
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /** Parses the models textarea (one `id` or `id|显示名` per line). */  const parseCustomModels = (): { id: string; name?: string }[] => {
+    const out: { id: string; name?: string }[] = []
+    for (const line of customModels.split(/[\n,]/)) {
+      const trimmed = line.trim()
+      if (trimmed === '') continue
+      const [mid, mname] = trimmed.split(/[|:]/, 2).map((s) => s.trim())
+      if (mid !== undefined && mid !== '') out.push({ id: mid, ...(mname !== undefined && mname !== '' ? { name: mname } : {}) })
+    }
+    return out
+  }
+
+  const saveCustom = async (): Promise<void> => {
+    if (anyBusy) return
+    const id = customId.trim()
+    const baseUrl = customBaseUrl.trim()
+    const models = parseCustomModels()
+    if (id === '' || baseUrl === '' || models.length === 0) {
+      setLive({ kind: 'error', text: t('settings.customValidation') })
+      return
+    }
+    if (!/^https?:\/\//i.test(baseUrl)) {
+      setLive({ kind: 'error', text: t('settings.customUrlInvalid') })
+      return
+    }
+    setBusy('custom')
+    setLive({ kind: 'info', text: t('settings.addingCustom') })
+    const key = customApiKey.trim()
+    try {
+      const s = await window.pi.addCustomProvider({
+        id,
+        ...(customName.trim() !== '' ? { name: customName.trim() } : {}),
+        baseUrl,
+        api: customApi,
+        ...(key !== '' ? { apiKey: key } : {}),
+        models: models.map((m) => ({
+          ...m,
+          ...(customImage ? { input: ['text', 'image'] as const } : {}),
+        })),
+      })
+      setSettings(s)
+      if (s.error !== null) {
+        setLive({ kind: 'error', text: s.error.message })
+      } else {
+        setLive({ kind: 'success', text: t('settings.customAdded', { name: customName.trim() !== '' ? customName.trim() : id }) })
+        // Reset and collapse the form; the provider list now includes it.
+        setCustomOpen(false)
+        setCustomId('')
+        setCustomName('')
+        setCustomBaseUrl('')
+        setCustomApiKey('')
+        setCustomModels('')
+        setCustomImage(false)
+        // Select the new provider so its panel is ready for a runtime key.
+        setSelectedProvider((prev) => prev ?? id)
+      }
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
     } finally {
@@ -246,7 +322,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     setBusy('approval')
     setApprovalStatus({
       kind: 'info',
-      text: target === 'managed' ? '正在请求开启全托管模式…' : '正在关闭全托管模式…',
+      text: target === 'managed' ? t('settings.approvalRequesting') : t('settings.approvalDisabling'),
     })
     try {
       const s = await window.pi.setToolApprovalMode(target)
@@ -255,13 +331,13 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         setApprovalStatus({ kind: 'error', text: s.error.message })
       } else if (s.toolApprovalMode === 'managed' && target === 'ask') {
         // Defensive: a disable request that came back still managed.
-        setApprovalStatus({ kind: 'error', text: '仍处于全托管模式，请重试' })
+        setApprovalStatus({ kind: 'error', text: t('settings.approvalStillManaged') })
       } else if (s.toolApprovalMode === 'managed') {
-        setApprovalStatus({ kind: 'success', text: '已开启全托管模式' })
+        setApprovalStatus({ kind: 'success', text: t('settings.approvalEnabled') })
       } else if (target === 'managed') {
-        setApprovalStatus({ kind: 'info', text: '已取消：未开启全托管模式' })
+        setApprovalStatus({ kind: 'info', text: t('settings.approvalCancelled') })
       } else {
-        setApprovalStatus({ kind: 'success', text: '已关闭全托管模式' })
+        setApprovalStatus({ kind: 'success', text: t('settings.approvalDisabled') })
       }
     } catch (e) {
       setApprovalStatus({ kind: 'error', text: errorMessage(e) })
@@ -281,15 +357,15 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     if (anyBusy) return
     const sec = Number(timeoutSec)
     if (!Number.isFinite(sec) || sec < TIMEOUT_MIN_S || sec > TIMEOUT_MAX_S) {
-      setLive({ kind: 'error', text: `HTTP 空闲超时需在 ${TIMEOUT_MIN_S}–${TIMEOUT_MAX_S} 秒之间` })
+      setLive({ kind: 'error', text: t('settings.timeoutInvalid', { min: TIMEOUT_MIN_S, max: TIMEOUT_MAX_S }) })
       return
     }
     if (Object.keys(patch).length === 0) {
-      setLive({ kind: 'info', text: '没有需要保存的更改' })
+      setLive({ kind: 'info', text: t('settings.noChanges') })
       return
     }
     setBusy('save')
-    setLive({ kind: 'info', text: '正在保存默认设置…' })
+    setLive({ kind: 'info', text: t('settings.savingDefaults') })
     try {
       const s = await window.pi.updateSettings(patch)
       setSettings(s)
@@ -304,7 +380,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         setCompaction(s.compactionEnabled)
         setRetry(s.retryEnabled)
         setTimeoutSec(String(Math.round(s.httpIdleTimeoutMs / 1000)))
-        setLive({ kind: 'success', text: '默认设置已保存' })
+        setLive({ kind: 'success', text: t('settings.saved') })
       }
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
@@ -385,6 +461,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
 
   const renderProviderButton = (p: ProviderStatus) => {
     const active = p.id === selectedProvider
+    const isDefault = p.id === settings?.defaultProvider
     return (
       <button
         key={p.id}
@@ -401,9 +478,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         <span className="sett-provider-name">{p.name}</span>
         <span className="sett-provider-id">{p.id}</span>
         <span className="sett-provider-meta">
-          <span className={`sett-auth sett-auth-${p.authStatus}`}>{AUTH_LABELS[p.authStatus]}</span>
-          <span>{p.availableModelCount} 个模型</span>
+          <span className={`sett-auth sett-auth-${p.authStatus}`}>{t(AUTH_KEYS[p.authStatus])}</span>
+          <span>{t('settings.models', { n: p.availableModelCount })}</span>
           {p.credentialType !== null ? <span>{p.credentialType}</span> : null}
+          {isDefault ? <span className="sett-provider-default">{t('common.default')}</span> : null}
         </span>
       </button>
     )
@@ -421,9 +499,9 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       >
         <header className="sett-head">
           <h2 id="sett-title" className="sett-title">
-            设置
+            {t('settings.title')}
           </h2>
-          <button type="button" className="btn-icon" data-sett-close onClick={closeSheet} aria-label="关闭设置">
+          <button type="button" className="btn-icon" data-sett-close onClick={closeSheet} aria-label={t('settings.close')}>
             <X size={15} aria-hidden="true" />
           </button>
         </header>
@@ -434,30 +512,83 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
           {phase === 'loading' ? (
             <div className="sett-state">
               <LoaderCircle size={22} className="sett-spin" aria-hidden="true" />
-              <p>正在加载设置…</p>
+              <p>{t('settings.loading')}</p>
             </div>
           ) : phase === 'error' ? (
             <div className="sett-state">
               <TriangleAlert size={22} aria-hidden="true" />
-              <p>无法加载设置：{loadMessage}</p>
+              <p>{t('settings.loadFailed')}{loadMessage}</p>
               <button type="button" className="btn" onClick={() => void load()}>
                 <RotateCcw size={13} aria-hidden="true" />
-                重试
+                {t('common.retry')}
               </button>
             </div>
           ) : settings === null ? null : (
             <>
+              {/* Appearance: language + theme (UI-local preferences). */}
+              <section className="sett-section" aria-labelledby="sett-appearance-title">
+                <h3 id="sett-appearance-title">{t('settings.appearance')}</h3>
+                <p className="sett-hint">{t('settings.appearanceHint')}</p>
+                <div className="sett-field">
+                  <label htmlFor="sett-lang">{t('settings.language')}</label>
+                  <select
+                    id="sett-lang"
+                    className="sett-select"
+                    value={lang}
+                    onChange={(e) => setLang(e.target.value as 'zh' | 'en')}
+                  >
+                    <option value="zh">{t('settings.language.zh')}</option>
+                    <option value="en">{t('settings.language.en')}</option>
+                  </select>
+                </div>
+                <div className="sett-field">
+                  <label>{t('settings.theme')}</label>
+                  <div className="sett-theme-row" role="radiogroup" aria-label={t('settings.theme')}>
+                    {THEMES.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={theme === item.id}
+                        className={`sett-theme${theme === item.id ? ' sett-theme-active' : ''}`}
+                        onClick={() => setTheme(item.id as ThemeId)}
+                        title={t(item.labelKey)}
+                      >
+                        <span className="sett-theme-swatch" style={{ background: item.swatch }} aria-hidden="true" />
+                        <span>{t(item.labelKey)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
               <section className="sett-section" aria-labelledby="sett-providers-title">
-                <h3 id="sett-providers-title">模型提供商</h3>
+                <div className="sett-section-head">
+                  <h3 id="sett-providers-title">{t('settings.providers')}</h3>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={anyBusy}
+                    onClick={() => {
+                      setCustomOpen((v) => !v)
+                      setLive(null)
+                    }}
+                    aria-expanded={customOpen}
+                  >
+                    <Plus size={13} aria-hidden="true" />
+                    {customOpen ? t('settings.collapseForm') : t('settings.addCustom')}
+                  </button>
+                </div>
+                <p className="sett-hint">{t('settings.providersHint')}</p>
                 {providers.length === 0 ? (
                   <div className="sett-empty">
-                    <p>未发现已配置的模型提供商。</p>
+                    <p>{t('settings.noProviders')}</p>
                     <p className="sett-empty-hint">
-                      可在终端运行 <code>pi /login</code> 登录，然后刷新模型列表。
+                      {t('settings.noProvidersHint')}
                     </p>
                     <button type="button" className="btn" onClick={() => void refresh()} disabled={anyBusy}>
                       <RefreshCw size={13} aria-hidden="true" />
-                      {busy === 'refresh' ? '刷新中…' : '刷新模型列表'}
+                      {busy === 'refresh' ? t('settings.refreshing') : t('settings.refreshModels')}
                     </button>
                   </div>
                 ) : (
@@ -467,83 +598,203 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       <input
                         type="search"
                         className="sett-provider-search-input"
-                        placeholder="搜索提供商（名称或 ID）"
-                        aria-label="搜索提供商"
+                        placeholder={t('settings.searchProvider')}
+                        aria-label={t('settings.searchAria')}
                         value={providerQuery}
                         onChange={(e) => setProviderQuery(e.target.value)}
                       />
                     </div>
                     {selectedPinned && selected !== null ? (
                       <div className="sett-provider-pinned">
-                        <p className="sett-pinned-label">已选（不在搜索结果中）</p>
+                        <p className="sett-pinned-label">{t('settings.pinnedLabel')}</p>
                         {renderProviderButton(selected)}
                       </div>
                     ) : null}
                     {filteredProviders.length === 0 ? (
-                      <p className="sett-search-empty">未找到匹配的提供商</p>
+                      <p className="sett-search-empty">{t('settings.searchEmpty')}</p>
                     ) : (
                       <div className="sett-provider-list">{filteredProviders.map((p) => renderProviderButton(p))}</div>
                     )}
                   </>
                 )}
-              </section>
 
-              <section className="sett-section" aria-labelledby="sett-key-title">
-                <h3 id="sett-key-title">API Key（仅本次运行）</h3>
-                {selected === null ? (
-                  <p className="sett-hint">请先在上方选择一个提供商。</p>
-                ) : (
-                  <>
-                    <p className="sett-hint">
-                      为 <strong>{selected.name}</strong> 配置临时 API Key。仅本次运行有效，关闭应用后失效，不会写入磁盘。
-                    </p>
-                    <div className="sett-key-row">
+                {/* Custom provider form: writes a provider into the agent's
+                    models.json (local model servers, proxies, custom endpoints). */}
+                {customOpen ? (
+                  <div className="sett-custom">
+                    <h4 className="sett-custom-title">{t('settings.customTitle')}</h4>
+                    <p className="sett-hint">{t('settings.customHint')}</p>
+                    <div className="sett-custom-grid">
+                      <div className="sett-field">
+                        <label htmlFor="custom-id">{t('settings.customId')}</label>
+                        <input
+                          id="custom-id"
+                          className="sett-input"
+                          placeholder={t('settings.customIdPh')}
+                          value={customId}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomId(e.target.value)}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="custom-name">{t('settings.customName')}</label>
+                        <input
+                          id="custom-name"
+                          className="sett-input"
+                          placeholder={t('settings.customNamePh')}
+                          value={customName}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomName(e.target.value)}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="custom-url">{t('settings.customUrl')}</label>
+                        <input
+                          id="custom-url"
+                          className="sett-input"
+                          placeholder={t('settings.customUrlPh')}
+                          value={customBaseUrl}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomBaseUrl(e.target.value)}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="custom-api">{t('settings.customApi')}</label>
+                        <select
+                          id="custom-api"
+                          className="sett-select"
+                          value={customApi}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomApi(e.target.value as CustomProviderApi)}
+                        >
+                          {CUSTOM_PROVIDER_APIS.map((a) => (
+                            <option key={a} value={a}>
+                              {a}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="custom-key">{t('settings.customKey')}</label>
+                        <input
+                          id="custom-key"
+                          type="password"
+                          className="sett-input"
+                          autoComplete="new-password"
+                          placeholder={t('settings.customKeyPh')}
+                          value={customApiKey}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomApiKey(e.target.value)}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="custom-models">{t('settings.customModels')}</label>
+                        <textarea
+                          id="custom-models"
+                          className="sett-input sett-textarea"
+                          rows={3}
+                          placeholder={'llama3.1:8b\nqwen2.5-coder:7b|Qwen 2.5 Coder'}
+                          value={customModels}
+                          disabled={anyBusy}
+                          onChange={(e) => setCustomModels(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <label className="sett-toggle">
                       <input
-                        type="password"
-                        className="sett-input"
-                        autoComplete="new-password"
-                        placeholder="粘贴 API Key"
-                        aria-label="API Key"
-                        value={apiKey}
+                        type="checkbox"
+                        checked={customImage}
                         disabled={anyBusy}
-                        onChange={(e) => setApiKey(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') void submitKey()
-                        }}
+                        onChange={(e) => setCustomImage(e.target.checked)}
                       />
+                      {t('settings.customImage')}
+                    </label>
+                    <div className="sett-custom-actions">
                       <button
                         type="button"
                         className="btn btn-primary"
-                        disabled={anyBusy || apiKey.trim() === ''}
-                        onClick={() => void submitKey()}
+                        disabled={anyBusy}
+                        onClick={() => void saveCustom()}
                       >
-                        {busy === 'key' ? '设置中…' : '设置 Key'}
-                      </button>
-                    </div>
-                    <div className="sett-key-actions">
-                      <button type="button" className="btn" disabled={anyBusy} onClick={() => void refresh()}>
-                        <RefreshCw size={13} aria-hidden="true" />
-                        {busy === 'refresh' ? '刷新中…' : '刷新模型列表'}
+                        {busy === 'custom' ? t('settings.addingProvider') : t('settings.addProvider')}
                       </button>
                       <button
                         type="button"
-                        className={`btn${confirmLogout ? ' btn-danger' : ''}`}
+                        className="btn"
                         disabled={anyBusy}
-                        onClick={() => void logout()}
+                        onClick={() => {
+                          setCustomOpen(false)
+                          setLive(null)
+                        }}
                       >
-                        <LogOut size={13} aria-hidden="true" />
-                        {confirmLogout ? '再次点击确认退出' : '退出登录'}
+                        {t('common.cancel')}
                       </button>
                     </div>
-                  </>
-                )}
+                  </div>
+                ) : null}
+
+                {/* Provider action panel: sits right under the list so the
+                    choose-then-configure flow reads top-to-bottom. */}
+                <div className="sett-provider-panel" aria-labelledby="sett-key-title">
+                  <div className="sett-provider-panel-head">
+                    <h3 id="sett-key-title">{t('settings.keyTitle')}</h3>
+                    {selected !== null ? (
+                      <span className={`sett-auth sett-auth-${selected.authStatus}`}>{t(AUTH_KEYS[selected.authStatus])}</span>
+                    ) : null}
+                  </div>
+                  {selected === null ? (
+                    <p className="sett-hint">{t('settings.selectProviderFirst')}</p>
+                  ) : (
+                    <>
+                      <p className="sett-hint">{t('settings.keyHint', { name: selected.name })}</p>
+                      <div className="sett-key-row">
+                        <input
+                          type="password"
+                          className="sett-input"
+                          autoComplete="new-password"
+                          placeholder={t('settings.keyPlaceholder')}
+                          aria-label="API Key"
+                          value={apiKey}
+                          disabled={anyBusy}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void submitKey()
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={anyBusy || apiKey.trim() === ''}
+                          onClick={() => void submitKey()}
+                        >
+                          {busy === 'key' ? t('settings.settingKey') : t('settings.setKey')}
+                        </button>
+                      </div>
+                      <div className="sett-key-actions">
+                        <button type="button" className="btn" disabled={anyBusy} onClick={() => void refresh()}>
+                          <RefreshCw size={13} aria-hidden="true" />
+                          {busy === 'refresh' ? t('settings.refreshing') : t('settings.refreshModels')}
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn${confirmLogout ? ' btn-danger' : ''}`}
+                          disabled={anyBusy}
+                          onClick={() => void logout()}
+                        >
+                          <LogOut size={13} aria-hidden="true" />
+                          {confirmLogout ? t('settings.confirmLogout') : t('settings.logout')}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </section>
 
               <section className="sett-section" aria-labelledby="sett-defaults-title">
-                <h3 id="sett-defaults-title">默认设置</h3>
-                <p className="sett-hint">默认值用于新会话；当前会话模型仍由顶部选择器控制。</p>
+                <h3 id="sett-defaults-title">{t('settings.defaults')}</h3>
+                <p className="sett-hint">{t('settings.defaultsHint')}</p>
                 <div className="sett-field">
-                  <label htmlFor="sett-provider">默认提供商</label>
+                  <label htmlFor="sett-provider">{t('settings.defaultProvider')}</label>
                   <select
                     id="sett-provider"
                     className="sett-select"
@@ -555,7 +806,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       setDefaultModel(null)
                     }}
                   >
-                    <option value="">跟随上次选择</option>
+                    <option value="">{t('settings.followLast')}</option>
                     {providerOptions.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
@@ -563,11 +814,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     ))}
                   </select>
                   {providerOptions.length === 0 ? (
-                    <span className="sett-field-hint">暂无可用模型，请先配置 API Key 或运行 pi /login</span>
+                    <span className="sett-field-hint">{t('settings.noModelsHint')}</span>
                   ) : null}
                 </div>
                 <div className="sett-field">
-                  <label htmlFor="sett-model">默认模型</label>
+                  <label htmlFor="sett-model">{t('settings.defaultModel')}</label>
                   <select
                     id="sett-model"
                     className="sett-select"
@@ -578,7 +829,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       setDefaultModel(v === '' ? null : v)
                     }}
                   >
-                    <option value="">提供商默认</option>
+                    <option value="">{t('settings.providerDefault')}</option>
                     {modelOptions.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
@@ -587,7 +838,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </select>
                 </div>
                 <div className="sett-field">
-                  <label htmlFor="sett-thinking">默认思考强度</label>
+                  <label htmlFor="sett-thinking">{t('settings.defaultThinking')}</label>
                   <select
                     id="sett-thinking"
                     className="sett-select"
@@ -597,9 +848,9 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       setThinking(e.target.value as ThinkingLevel)
                     }}
                   >
-                    {THINKING_OPTIONS.map((o) => (
+                    {THINKING_KEYS.map((o) => (
                       <option key={o.value} value={o.value}>
-                        {o.label}
+                        {t(o.labelKey)}
                       </option>
                     ))}
                   </select>
@@ -614,7 +865,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                         setCompaction(e.target.checked)
                       }}
                     />
-                    自动压缩上下文
+                    {t('settings.autoCompact')}
                   </label>
                   <label className="sett-toggle">
                     <input
@@ -625,11 +876,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                         setRetry(e.target.checked)
                       }}
                     />
-                    自动重试
+                    {t('settings.autoRetry')}
                   </label>
                 </div>
                 <div className="sett-field">
-                  <label htmlFor="sett-timeout">HTTP 空闲超时（秒）</label>
+                  <label htmlFor="sett-timeout">{t('settings.httpTimeout')}</label>
                   <input
                     id="sett-timeout"
                     type="number"
@@ -644,21 +895,21 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     }}
                   />
                   <span className="sett-field-hint">
-                    范围 {TIMEOUT_MIN_S}–{TIMEOUT_MAX_S} 秒，保存时转换为毫秒
+                    {t('settings.timeoutRange', { min: TIMEOUT_MIN_S, max: TIMEOUT_MAX_S })}
                   </span>
                 </div>
-                <div className="sett-readonly" aria-label="只读设置">
+                <div className="sett-readonly" aria-label={t('settings.readonly')}>
                   <span>
-                    压缩保留 <strong>{settings.compaction.reserveTokens !== null ? formatTokens(settings.compaction.reserveTokens) : '—'}</strong>
+                    {t('settings.reserveTokens')} <strong>{settings.compaction.reserveTokens !== null ? formatTokens(settings.compaction.reserveTokens) : '—'}</strong>
                   </span>
                   <span>
-                    保留最近 <strong>{settings.compaction.keepRecentTokens !== null ? formatTokens(settings.compaction.keepRecentTokens) : '—'}</strong>
+                    {t('settings.keepRecent')} <strong>{settings.compaction.keepRecentTokens !== null ? formatTokens(settings.compaction.keepRecentTokens) : '—'}</strong>
                   </span>
                   <span>
-                    最大重试 <strong>{settings.retry.maxRetries !== null ? `${settings.retry.maxRetries} 次` : '—'}</strong>
+                    {t('settings.maxRetries')} <strong>{settings.retry.maxRetries !== null ? t('settings.retries', { n: settings.retry.maxRetries }) : '—'}</strong>
                   </span>
                   <span>
-                    重试延迟 <strong>{settings.retry.baseDelayMs !== null ? formatDuration(settings.retry.baseDelayMs) : '—'}</strong>
+                    {t('settings.retryDelay')} <strong>{settings.retry.baseDelayMs !== null ? formatDuration(settings.retry.baseDelayMs) : '—'}</strong>
                   </span>
                 </div>
                 <button
@@ -667,7 +918,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   disabled={anyBusy || !dirty}
                   onClick={() => void saveDefaults()}
                 >
-                  {busy === 'save' ? '保存中…' : '保存默认设置'}
+                  {busy === 'save' ? t('settings.saving') : t('settings.saveDefaults')}
                 </button>
               </section>
 
@@ -677,15 +928,15 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                 data-sett-approval
               >
                 <h3 id="sett-approval-title">
-                  工具审批
+                  {t('settings.approval')}
                   <span className={`sett-approval-pill sett-approval-pill-${approvalMode}`}>
-                    {approvalMode === 'managed' ? '全托管' : '逐次确认'}
+                    {approvalMode === 'managed' ? t('settings.approvalPillManaged') : t('settings.approvalPillAsk')}
                   </span>
                 </h3>
                 <p className="sett-approval-note">
                   {approvalMode === 'managed'
-                    ? '命令和文件修改将不再逐次确认；使用当前用户权限；不是沙箱；请仅在信任当前任务时开启。'
-                    : '每次执行 bash / edit / write 前都会向你确认，命令与文件修改不会在未经确认时执行。'}
+                    ? t('settings.approvalManagedNote')
+                    : t('settings.approvalAskNote')}
                 </p>
                 <label className="sett-switch-row">
                   <span className="sett-switch">
@@ -695,17 +946,17 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       data-sett-approval-toggle
                       checked={approvalMode === 'managed'}
                       disabled={anyBusy}
-                      aria-label="全托管模式（工具免逐次确认）"
+                      aria-label={t('settings.approvalAria')}
                       onChange={() => void toggleApproval()}
                     />
                     <span className="sett-switch-track" aria-hidden="true" />
                   </span>
                   <span className="sett-switch-text">
-                    <span className="sett-switch-title">全托管模式</span>
+                    <span className="sett-switch-title">{t('settings.approvalSwitchTitle')}</span>
                     <span className="sett-switch-sub">
                       {approvalMode === 'managed'
-                        ? '已开启：bash / edit / write 不再逐次确认'
-                        : '关闭：bash / edit / write 每次执行前确认'}
+                        ? t('settings.approvalSwitchManaged')
+                        : t('settings.approvalSwitchAsk')}
                     </span>
                   </span>
                 </label>

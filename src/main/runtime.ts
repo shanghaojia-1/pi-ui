@@ -1,7 +1,7 @@
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
-import { lstatSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { BrowserWindow, dialog, type MessageBoxOptions, type OpenDialogOptions } from 'electron'
+import { BrowserWindow, clipboard, dialog, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -14,11 +14,11 @@ import {
   type InlineExtension,
 } from '@earendil-works/pi-coding-agent'
 import type {
-  AppError, AppSnapshot, ChatMessage, CompactionConfig, MessageBlock, ModelInfo,
-  ProviderStatus, RetryConfig, RunState, SessionListItem, SettingsPatch, SettingsSnapshot,
+  AppError, AppSnapshot, ChatMessage, CompactionConfig, CustomProviderConfig, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
+  ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
-import { sanitizeErrorText } from '../shared/contracts'
+import { isPlainObject, sanitizeErrorText } from '../shared/contracts'
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 const APPROVAL_TOOLS = new Set(['bash', 'edit', 'write'])
@@ -27,6 +27,24 @@ const textOf = (content: unknown): string => {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content.map((part) => RECORD(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : '').join('')
+}
+
+/**
+ * Extracts image parts from a user-message content (string or content array)
+ * as ImageBlocks. The SDK stores attached images in the content array with
+ * { type: 'image', data, mimeType }; each is re-emitted so the UI can render
+ * what the user actually sent.
+ */
+const imagesOf = (content: unknown): ImageBlock[] => {
+  if (!Array.isArray(content)) return []
+  const images: ImageBlock[] = []
+  for (const part of content) {
+    if (!RECORD(part) || part.type !== 'image') continue
+    if (typeof part.data !== 'string' || typeof part.mimeType !== 'string') continue
+    if (!/^image\/[a-z0-9.+-]+$/i.test(part.mimeType) || !/^[A-Za-z0-9+/=\s]+$/.test(part.data)) continue
+    images.push({ type: 'image', data: part.data, mimeType: part.mimeType })
+  }
+  return images
 }
 const clip = (value: unknown, limit = 12000): string => {
   let output: string
@@ -237,6 +255,13 @@ export class PiRuntime {
   private closingCounts = new WeakMap<AgentSession, number>()
   /** True when the workspace restore had to skip an unopenable persisted session. */
   private skippedRestore = false
+  /**
+   * Display-name overrides for sessions whose JSONL is not yet on disk (an
+   * empty session never persists until the first assistant message, so a
+   * `/name` on it would otherwise be lost). Keyed by canonical session path;
+   * entries survive until that session is deleted.
+   */
+  private sessionNameOverrides = new Map<string, string>()
   /**
    * Live assistant turn (message_start..message_end). Cleared at
    * agent_settled, abort, dispose and session switches.
@@ -599,6 +624,32 @@ export class PiRuntime {
   }
 
   /**
+   * Deletes a persisted session after the same path verification as opening
+   * (allowlist + session root + canonical identity), so no file outside the
+   * workspace's own session directory can ever be removed. Deleting the ACTIVE
+   * session tears the live session down first (bounded teardown, same protocol
+   * as workspace switches) and replaces it with a fresh empty one; deleting an
+   * inactive session only removes its JSONL. The sidebar refreshes either way.
+   */
+  deleteSession(path: string): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        if (!this.workspace) throw new Error('Choose a workspace first')
+        const canonical = this.verifySessionPath(path)
+        const active = this.activePath()
+        const isActive = active !== null && canonicalizeEvenIfMissing(active) === canonical
+        unlinkSync(canonical)
+        this.sessionNameOverrides.delete(canonical)
+        if (isActive) {
+          await this.disposeSession()
+          await this.createSession(SessionManager.create(this.workspace.path))
+        }
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to delete session', error) }
+    }).then(() => this.snapshot())
+  }
+
+  /**
    * Verifies that `path` is a regular, non-symlink file whose canonical path is
    * both listed in the sessions allowlist and inside the workspace's canonical
    * session directory. Returns the canonical path.
@@ -617,9 +668,10 @@ export class PiRuntime {
     return canonical
   }
 
-  prompt(text: string): Promise<void> {
+  prompt(text: string, images?: ImageAttachment[]): Promise<void> {
     const promptText = text.trim()
-    if (!promptText) return Promise.resolve()
+    const hasImages = images !== undefined && images.length > 0
+    if (!promptText && !hasImages) return Promise.resolve()
     const session = this.session
     const epoch = this.epoch
     if (!session) { this.recordError('No active session', new Error('Choose a workspace first')); return Promise.resolve() }
@@ -632,8 +684,17 @@ export class PiRuntime {
     const fail = (error: unknown): void => {
       if (this.session === session && this.epoch === epoch) this.recordError('Run failed', error)
     }
+    // Attachments become SDK image content parts (base64 payload + mime type).
+    const attached: { type: 'image'; data: string; mimeType: string }[] | undefined = images && images.length > 0
+      ? images.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))
+      : undefined
+    const promptOptions = (): { images?: { type: 'image'; data: string; mimeType: string }[]; streamingBehavior?: 'steer' | 'followUp'; preflightResult?: (success: boolean) => void } => {
+      const options: { images?: { type: 'image'; data: string; mimeType: string }[]; streamingBehavior?: 'steer' | 'followUp'; preflightResult?: (success: boolean) => void } = {}
+      if (attached) options.images = attached
+      return options
+    }
     if (session.isStreaming) {
-      return session.prompt(promptText, { streamingBehavior: 'followUp' }).catch(fail)
+      return session.prompt(promptText, { ...promptOptions(), streamingBehavior: 'followUp' }).catch(fail)
     }
     // Non-streaming runs pass a preflight phase before the run actually starts.
     // The returned promise settles at preflight accept/reject, never with the
@@ -655,6 +716,7 @@ export class PiRuntime {
     let run: Promise<unknown>
     try {
       run = session.prompt(promptText, {
+        ...promptOptions(),
         preflightResult: (success: boolean) => {
           if (success && this.closingSessions.has(session)) {
             // The session started closing while the preflight was pending:
@@ -866,9 +928,161 @@ export class PiRuntime {
     })
   }
 
+  /**
+   * Adds (or replaces) a custom provider in the agent's models.json, keeping
+   * every existing provider entry intact, then reloads the model catalog from
+   * disk. The write is atomic (tmp file + rename) so a crash can never leave
+   * a truncated models.json; the tmp suffix is excluded from loading by the
+   * config loader's file scan. The API key is written only when provided;
+   * otherwise the provider falls back to env/runtime keys.
+   */
+  addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const modelsPath = join(getAgentDir(), 'models.json')
+        let data: { providers?: Record<string, unknown> } = {}
+        try {
+          const raw = readFileSync(modelsPath, 'utf8')
+          const parsed: unknown = JSON.parse(raw)
+          if (isPlainObject(parsed)) data = parsed as { providers?: Record<string, unknown> }
+        } catch {
+          // Missing or corrupt models.json: start from an empty config. The
+          // corrupt file is replaced, never merged into.
+          data = {}
+        }
+        const providers: Record<string, unknown> = isPlainObject(data.providers) ? data.providers : {}
+        providers[config.id] = {
+          name: config.name && config.name !== config.id ? config.name : undefined,
+          baseUrl: config.baseUrl,
+          api: config.api,
+          apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : undefined,
+          models: config.models.map((m) => ({
+            id: m.id,
+            name: m.name && m.name !== m.id ? m.name : undefined,
+            input: m.input && m.input.length > 0 ? m.input : undefined,
+            contextWindow: m.contextWindow,
+          })),
+        }
+        const tmpPath = `${modelsPath}.tmp`
+        writeFileSync(tmpPath, JSON.stringify({ ...data, providers }, null, 2))
+        renameSync(tmpPath, modelsPath)
+        // Reload models.json + rebuild the provider catalog WITHOUT any network
+        // round-trip: custom providers are local config, and the models-store
+        // refresh below re-reads exactly what was just written.
+        const runtime = this.modelRuntime
+        if (!runtime) throw new Error('Model runtime unavailable')
+        const result = await runtime.refresh({ allowNetwork: false })
+        await this.reloadModels()
+        if (result.errors.size > 0) throw new Error('Model refresh failed')
+        this.settingsError = null
+      } catch {
+        // Fixed text only: the raw error may embed config paths or the payload.
+        this.settingsError = { message: '添加自定义提供商失败', recoverable: true }
+      }
+      this.emit()
+      return this.settingsSnapshot()
+    })
+  }
+
+  /**
+   * Slash-command support: session-level operations wired to the SDK, shared
+   * by the composer's `/` menu. Each runs through the same serialized opChain
+   * as every other mutation so they can never overlap a prompt/abort.
+   */
+
+  /** `/name <name>`: set the display name of the active session. */
+  renameSession(name: string): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const session = this.session
+        if (!session) throw new Error('No active session')
+        const trimmed = name.trim()
+        if (trimmed === '' || trimmed.length > 128) throw new Error('Invalid session name')
+        session.setSessionName(trimmed)
+        const path = this.activePath()
+        // Remember the name in memory too: an empty session has no JSONL yet
+        // (the SDK persists only once an assistant message exists), so the
+        // sidebar would otherwise keep showing the placeholder.
+        if (path) this.sessionNameOverrides.set(canonicalizeEvenIfMissing(path), trimmed)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to rename session', error) }
+    }).then(() => this.snapshot())
+  }
+
+  /** `/compact [prompt]`: manually compact the active session context. */
+  compactSession(customInstructions?: string): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const session = this.session
+        if (!session) throw new Error('No active session')
+        const instructions = customInstructions?.trim()
+        await session.compact(instructions !== undefined && instructions !== '' ? instructions : undefined)
+      } catch (error) { this.recordError('Compaction failed', error) }
+    }).then(() => this.snapshot())
+  }
+
+  /** `/copy`: copy the last assistant message text to the system clipboard. */
+  copyLastMessage(): Promise<boolean> {
+    const text = this.session?.getLastAssistantText() ?? null
+    if (!text) return Promise.resolve(false)
+    clipboard.writeText(text)
+    return Promise.resolve(true)
+  }
+
+  /** `/export`: save the active session as JSONL via a native save dialog. */
+  exportSession(): Promise<string | null> {
+    return this.enqueue(async () => {
+      const session = this.session
+      if (!session) return null
+      const defaultName = `${(session.sessionManager.getSessionName() ?? 'pi-session').replace(/[^\w\u4e00-\u9fff-]+/g, '-')}.jsonl`
+      const options: SaveDialogOptions = {
+        title: '导出会话为 JSONL',
+        defaultPath: defaultName,
+        filters: [{ name: 'JSONL 会话', extensions: ['jsonl'] }],
+      }
+      const win = this.dialogWindow()
+      const result = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || result.filePath === undefined) return null
+      return session.exportToJsonl(result.filePath)
+    })
+  }
+
+  /** `/session`: stats of the active session for the info dialog. */
+  getSessionStats(): Promise<SessionStatsInfo | null> {
+    const session = this.session
+    if (!session) return Promise.resolve(null)
+    const stats = session.getSessionStats()
+    const name = session.sessionManager.getSessionName() ?? null
+    return Promise.resolve({
+      sessionId: stats.sessionId,
+      sessionFile: stats.sessionFile ?? null,
+      sessionName: name,
+      userMessages: stats.userMessages,
+      assistantMessages: stats.assistantMessages,
+      toolCalls: stats.toolCalls,
+      totalMessages: stats.totalMessages,
+      inputTokens: stats.tokens.input,
+      outputTokens: stats.tokens.output,
+      cacheReadTokens: stats.tokens.cacheRead,
+      cost: stats.cost,
+    })
+  }
+
+  /** `/reload`: reload extensions, skills, prompt templates and context files. */
+  reloadSession(): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const session = this.session
+        if (!session) throw new Error('No active session')
+        await session.reload()
+      } catch (error) { this.recordError('Reload failed', error) }
+    }).then(() => this.snapshot())
+  }
+
   /** Registers a submitted runtime API key as a redaction target (memory only). */
-  private rememberSecret(provider: string, key: string): void {
-    this.knownSecrets.add(key)
+  private rememberSecret(provider: string, key: string): void {    this.knownSecrets.add(key)
     let secrets = this.knownSecretsByProvider.get(provider)
     if (!secrets) { secrets = new Set(); this.knownSecretsByProvider.set(provider, secrets) }
     secrets.add(key)
@@ -1201,7 +1415,12 @@ export class PiRuntime {
       if (!RECORD(message) || typeof message.role !== 'string') return
       const timestamp = typeof message.timestamp === 'number' ? message.timestamp : undefined
       if (message.role === 'user') {
-        messages.push({ id: `user-${messageIndex}-${timestamp ?? 0}`, role: 'user', blocks: [{ type: 'text', text: textOf(message.content) }], ...(timestamp ? { timestamp } : {}) })
+        messages.push({
+          id: `user-${messageIndex}-${timestamp ?? 0}`,
+          role: 'user',
+          blocks: [{ type: 'text', text: textOf(message.content) }, ...imagesOf(message.content)],
+          ...(timestamp ? { timestamp } : {}),
+        })
         return
       }
       if (message.role === 'assistant') {
@@ -1269,7 +1488,14 @@ export class PiRuntime {
       const seenInMessage = new Map<string, number>()
       for (const [contentIndex, part] of message.content.entries()) {
         if (!RECORD(part) || typeof part.type !== 'string') continue
-        if ((part.type === 'text' || part.type === 'thinking') && typeof part.text === 'string') blocks.push({ type: part.type, text: part.text })
+        if (part.type === 'text' && typeof part.text === 'string') blocks.push({ type: 'text', text: part.text })
+        // Thinking parts: the SDK emits { type:'thinking', thinking: string }
+        // (pi-ai ThinkingContent) — older/other shapes may use `text`. Both
+        // are accepted so reasoning is never silently dropped.
+        else if (part.type === 'thinking') {
+          const thinkingText = typeof part.thinking === 'string' ? part.thinking : typeof part.text === 'string' ? part.text : null
+          if (thinkingText !== null) blocks.push({ type: 'thinking', text: thinkingText })
+        }
         if (part.type === 'toolCall' && typeof part.id === 'string' && typeof part.name === 'string') {
           blocks.push(this.resolveToolBlock(part.id, part.name, part.arguments, ctx.ordinal, contentIndex, seenInMessage, ctx))
         }
@@ -1794,7 +2020,14 @@ export class PiRuntime {
     if (!this.workspace) return
     const sessions = await SessionManager.list(this.workspace.path)
     if (myEpoch !== this.epoch) return // a workspace switch happened while listing
-    this.sessions = sessions.map((item) => ({ id: item.id, path: item.path, title: item.name || item.firstMessage || 'New session', preview: item.firstMessage || 'No messages yet', modifiedAt: item.modified.toISOString(), messageCount: item.messageCount }))
+    this.sessions = sessions.map((item) => ({
+      id: item.id,
+      path: item.path,
+      title: (this.sessionNameOverrides.get(canonicalizeEvenIfMissing(item.path)) ?? item.name) || item.firstMessage || 'New session',
+      preview: item.firstMessage || 'No messages yet',
+      modifiedAt: item.modified.toISOString(),
+      messageCount: item.messageCount,
+    }))
     this.emit()
   }
 
@@ -1812,7 +2045,7 @@ export class PiRuntime {
     if (!this.session || !activePath) return sessions
     if (sessions.some((item) => item.path === activePath)) return sessions
     return [{
-      id: this.session.sessionId, path: activePath, title: 'New session',
+      id: this.session.sessionId, path: activePath, title: this.sessionNameOverrides.get(canonicalizeEvenIfMissing(activePath)) ?? 'New session',
       preview: 'No messages yet', modifiedAt: new Date().toISOString(), messageCount: 0,
     }, ...sessions]
   }

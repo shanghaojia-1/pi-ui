@@ -4,7 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { createElement, type ComponentProps } from 'react'
 import Markdown from '../../src/renderer/src/components/Markdown'
 import MessageList from '../../src/renderer/src/components/MessageList'
+import { I18nProvider } from '../../src/renderer/src/lib/i18n'
 import type { ChatMessage } from '../../src/shared/contracts'
+import { type ReactElement } from 'react'
+
+/** All renders run inside the I18nProvider so t() resolves real strings. */
+function renderI18n(ui: ReactElement) {
+  return render(<I18nProvider initialLang="zh">{ui}</I18nProvider>)
+}
 
 /**
  * Render-count instrumentation: wrap react-markdown's default export in a
@@ -32,7 +39,7 @@ afterEach(() => {
 })
 
 function renderMarkdown(text: string) {
-  return render(<Markdown text={text} />)
+  return renderI18n(<Markdown text={text} />)
 }
 
 describe('Markdown rendering', () => {
@@ -173,7 +180,13 @@ describe('Markdown memoization under streaming updates', () => {
   }
 
   function list(messages: ChatMessage[]) {
-    return <MessageList messages={messages} pendingText={null} workspaceName={null} onSuggest={() => undefined} />
+    // The provider must be INSIDE the tree so rerender() keeps it mounted;
+    // wrapping only at render() time would unmount it on every rerender.
+    return (
+      <I18nProvider initialLang="zh">
+        <MessageList messages={messages} pendingText={null} workspaceName={null} onSuggest={() => undefined} />
+      </I18nProvider>
+    )
   }
 
   it('re-runs react-markdown only for the block whose content changed', () => {
@@ -337,12 +350,12 @@ describe('MessageList markdown wiring', () => {
       ]),
       message([{ type: 'text', text: '**你好**' }], { role: 'user', id: 'u1' }),
     ]
-    const { container } = render(
+    const { container } = renderI18n(
       <MessageList messages={messages} pendingText={null} workspaceName={null} onSuggest={() => undefined} />,
     )
     const thinking = container.querySelector('.thinking-body')
     expect(thinking?.querySelector('ul li')).not.toBeNull()
-    const assistant = container.querySelector('.msg-assistant .md')
+    const assistant = container.querySelector('.msg-assistant .msg-body > .md')
     expect(assistant?.querySelector('h1')?.textContent).toBe('结论')
     expect(assistant?.querySelector('.codeblock')).not.toBeNull()
     const user = container.querySelector('.msg-user .md')

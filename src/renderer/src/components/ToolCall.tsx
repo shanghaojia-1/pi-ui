@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { ChevronRight, CircleCheck, CircleSlash, CircleX, Clock, LoaderCircle } from 'lucide-react'
 import type { ToolBlock } from '@shared/contracts'
 import { formatDuration } from '../lib/format'
+import { useI18n } from '../lib/i18n'
 
-const STATUS_META: Record<ToolBlock['status'], { label: string }> = {
-  pending: { label: '排队中' },
-  running: { label: '运行中' },
-  success: { label: '成功' },
-  error: { label: '失败' },
-  interrupted: { label: '已中断' },
+const STATUS_META: Record<ToolBlock['status'], { labelKey: string }> = {
+  pending: { labelKey: 'toolcall.status.pending' },
+  running: { labelKey: 'toolcall.status.running' },
+  success: { labelKey: 'toolcall.status.success' },
+  error: { labelKey: 'toolcall.status.error' },
+  interrupted: { labelKey: 'toolcall.status.interrupted' },
 }
 
 function StatusIcon({ status }: { status: ToolBlock['status'] }) {
@@ -20,6 +21,7 @@ function StatusIcon({ status }: { status: ToolBlock['status'] }) {
 }
 
 export default function ToolCall({ tool }: { tool: ToolBlock }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(tool.status === 'running')
   useEffect(() => {
     if (tool.status === 'running') setOpen(true)
@@ -29,6 +31,7 @@ export default function ToolCall({ tool }: { tool: ToolBlock }) {
   const hasPatch = tool.patch !== undefined && tool.patch !== ''
   const hasInput = tool.input !== ''
   const meta = STATUS_META[tool.status]
+  const metaLabel = t(meta.labelKey)
 
   return (
     <div className={`toolcall${open ? ' toolcall-open' : ''}`} data-status={tool.status}>
@@ -37,12 +40,12 @@ export default function ToolCall({ tool }: { tool: ToolBlock }) {
         className="toolcall-head"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label={`工具 ${tool.name}（${meta.label}）`}
+        aria-label={`${tool.name} — ${metaLabel}`}
       >
         <ChevronRight size={12} className="toolcall-chevron" aria-hidden="true" />
         <StatusIcon status={tool.status} />
         <span className="toolcall-name">{tool.name}</span>
-        <span className="toolcall-state">{meta.label}</span>
+        <span className="toolcall-state">{metaLabel}</span>
         {tool.durationMs !== undefined ? (
           <span className="toolcall-duration">{formatDuration(tool.durationMs)}</span>
         ) : null}
@@ -52,19 +55,19 @@ export default function ToolCall({ tool }: { tool: ToolBlock }) {
         <div className="toolcall-body">
           {hasInput && (
             <details className="toolcall-section" open>
-              <summary>参数</summary>
+              <summary>{t('toolcall.args')}</summary>
               <pre className="toolcall-pre">{tool.input}</pre>
             </details>
           )}
           {hasOutput && (
             <details className="toolcall-section" open={tool.status === 'error'}>
-              <summary>输出</summary>
+              <summary>{t('toolcall.output')}</summary>
               <pre className="toolcall-pre">{tool.output}</pre>
             </details>
           )}
           {hasPatch && (
             <details className="toolcall-section">
-              <summary>变更</summary>
+              <summary>{t('toolcall.patch')}</summary>
               <pre className="toolcall-pre toolcall-patch">{tool.patch}</pre>
             </details>
           )}

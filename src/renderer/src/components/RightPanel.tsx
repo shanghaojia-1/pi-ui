@@ -3,6 +3,7 @@ import { ChevronRight, FileCode, Layers, Terminal } from 'lucide-react'
 import type { AppSnapshot, ToolBlock } from '@shared/contracts'
 import { formatCost, formatTokens, parsePatch, type DiffFile } from '../lib/format'
 import ToolCall from './ToolCall'
+import { useI18n } from '../lib/i18n'
 
 function Section({
   title,
@@ -72,6 +73,7 @@ interface RightPanelProps {
 }
 
 export default function RightPanel({ snapshot }: RightPanelProps) {
+  const { t } = useI18n()
   const patches = useMemo(() => {
     if (!snapshot) return []
     const seen = new Set<string>()
@@ -110,64 +112,61 @@ export default function RightPanel({ snapshot }: RightPanelProps) {
   )
 
   const usage = snapshot?.usage
-  // 总处理 counts everything the provider reported — cache writes included.
+  // Total processing counts everything the provider reported — cache writes included.
   const usageTotal =
     (usage?.input ?? 0) + (usage?.output ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0)
   const cost = usage?.cost ?? 0
-  const costTooltip =
-    cost === 0
-      ? '成本为 0：provider 未报告价格时可能显示为 0，不代表免费'
-      : '成本按 provider 报告的价格计算'
+  const costTooltip = cost === 0 ? t('rightPanel.costZero') : t('rightPanel.costFormula')
   const empty = patches.length === 0 && tools.length === 0 && usageTotal === 0
 
   return (
     <div className="right-panel">
       <div className="rp-header">
         <Layers size={14} aria-hidden="true" />
-        <span>活动</span>
+        <span>{t('rightPanel.activity')}</span>
       </div>
       <div className="rp-scroll">
         {empty ? (
           <div className="rp-empty">
             <Layers size={22} strokeWidth={1.4} aria-hidden="true" />
-            <p>暂无活动</p>
-            <p className="rp-empty-sub">开始对话后，文件变更、工具运行与用量会显示在这里</p>
+            <p>{t('rightPanel.noActivity')}</p>
+            <p className="rp-empty-sub">{t('rightPanel.noActivitySub')}</p>
           </div>
         ) : (
           <>
             {patches.length > 0 ? (
-              <Section title="变更" icon={<FileCode size={13} aria-hidden="true" />} count={patches.length} defaultOpen>
+              <Section title={t('rightPanel.patches')} icon={<FileCode size={13} aria-hidden="true" />} count={patches.length} defaultOpen>
                 {patches.map((p) => (
                   <PatchCard key={p.id} file={p.file} />
                 ))}
               </Section>
             ) : null}
             {tools.length > 0 ? (
-              <Section title="工具运行" icon={<Terminal size={13} aria-hidden="true" />} count={activeTools} defaultOpen>
+              <Section title={t('rightPanel.tools')} icon={<Terminal size={13} aria-hidden="true" />} count={activeTools} defaultOpen>
                 {tools.map((tool) => (
                   <ToolCall key={tool.id} tool={tool} />
                 ))}
               </Section>
             ) : null}
             {usageTotal > 0 ? (
-              <Section title="用量" icon={<Layers size={13} aria-hidden="true" />} count={0} defaultOpen>
+              <Section title={t('rightPanel.usage')} icon={<Layers size={13} aria-hidden="true" />} count={0} defaultOpen>
                 <div className="usage-grid">
-                  <span className="usage-label">输入 tokens</span>
+                  <span className="usage-label">{t('rightPanel.inputTokens')}</span>
                   <span className="usage-value">{formatTokens(usage?.input ?? 0)}</span>
-                  <span className="usage-label">输出 tokens</span>
+                  <span className="usage-label">{t('rightPanel.outputTokens')}</span>
                   <span className="usage-value">{formatTokens(usage?.output ?? 0)}</span>
-                  <span className="usage-label">缓存读取</span>
+                  <span className="usage-label">{t('rightPanel.cacheRead')}</span>
                   <span className="usage-value">{formatTokens(usage?.cacheRead ?? 0)}</span>
-                  <span className="usage-label">缓存写入</span>
+                  <span className="usage-label">{t('rightPanel.cacheWrite')}</span>
                   <span className="usage-value">{formatTokens(usage?.cacheWrite ?? 0)}</span>
                   <span className="usage-label" title={costTooltip}>
-                    成本
+                    {t('rightPanel.cost')}
                   </span>
                   <span className="usage-value" title={costTooltip}>
                     {formatCost(cost)}
                   </span>
-                  <span className="usage-label usage-total" title="总处理 = 输入 + 输出 + 缓存读取 + 缓存写入">
-                    总处理
+                  <span className="usage-label usage-total" title={t('rightPanel.totalTitle')}>
+                    {t('rightPanel.total')}
                   </span>
                   <span className="usage-value usage-total">{formatTokens(usageTotal)} tokens</span>
                 </div>

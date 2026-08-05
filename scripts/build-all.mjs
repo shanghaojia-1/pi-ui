@@ -22,9 +22,9 @@ if (!existsSync(cli)) {
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 
 const platforms = [
-  { name: 'mac', args: ['--mac'] },
-  { name: 'win', args: ['--win'] },
-  { name: 'linux', args: ['--linux'] },
+  { name: 'mac', args: ['--mac', '--arm64'] },
+  { name: 'win', args: ['--win', '--x64'] },
+  { name: 'linux', args: ['--linux', '--x64'] },
 ]
 
 const results = []

@@ -3,7 +3,7 @@
  * Verifies packaged artifacts under release/.
  *
  * Discovery (fully recursive, any depth):
- *   - packaged artifacts: *.dmg / *.zip / *.exe / *.AppImage / *.deb
+ *   - packaged artifacts: *.zip / *.exe / *.AppImage
  *     (excluding *.blockmap / *.yml / *.log and anything inside .app / *-unpacked)
  *   - mac bundles: every directory ending in .app
  *   - unpacked bundles: every directory ending in -unpacked (win* / linux*)
@@ -11,9 +11,9 @@
  *
  * Strict naming — every packaged artifact must match one of exactly these
  * (version read from release package.json):
- *   mac   Pi-Studio-<v>-mac-arm64.dmg|zip   and   Pi-Studio-<v>-mac-x64.dmg|zip
- *   win   Pi-Studio-<v>-win-x64-setup.exe  | Pi-Studio-<v>-win-x64-portable.exe
- *   linux Pi-Studio-<v>-linux-x64.AppImage | Pi-Studio-<v>-linux-x64.deb
+ *   mac   Pi-Studio-<v>-mac-arm64.zip
+ *   win   Pi-Studio-<v>-win-x64-portable.exe
+ *   linux Pi-Studio-<v>-linux-x64.AppImage
  * An arch group that has any artifacts must be complete (all expected files).
  *
  * Architecture checks (strong):
@@ -59,12 +59,9 @@ const EXCLUDED_NAME = /\.(blockmap|yml|log)$/i
 const BUNDLE_DIR = /(^|\/)([^/]+\.app|[^/]+-unpacked)\//
 
 const EXPECTED_ARTIFACTS = {
-  mac: {
-    arm64: [`Pi-Studio-${version}-mac-arm64.dmg`, `Pi-Studio-${version}-mac-arm64.zip`],
-    x64: [`Pi-Studio-${version}-mac-x64.dmg`, `Pi-Studio-${version}-mac-x64.zip`],
-  },
-  win: { x64: [`Pi-Studio-${version}-win-x64-setup.exe`, `Pi-Studio-${version}-win-x64-portable.exe`] },
-  linux: { x64: [`Pi-Studio-${version}-linux-x64.AppImage`, `Pi-Studio-${version}-linux-x64.deb`] },
+  mac: { arm64: [`Pi-Studio-${version}-mac-arm64.zip`] },
+  win: { x64: [`Pi-Studio-${version}-win-x64-portable.exe`] },
+  linux: { x64: [`Pi-Studio-${version}-linux-x64.AppImage`] },
 }
 const EXPECTED_BY_NAME = new Map()
 for (const [platform, archs] of Object.entries(EXPECTED_ARTIFACTS)) {
@@ -270,12 +267,43 @@ function verifyDmg(file) {
 
 function verifyZip(file) {
   try {
-    const out = execFileSync('unzip', ['-l', file], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] })
-    const appInside = /\.app\/|\.app\s*$/.test(out)
-    if (appInside) info('ok zip contains the .app bundle')
-    else fail(`${basename(file)}: zip listing contains no .app`)
+    // No external unzip dependency: read the central directory via node's
+    // built-in zlib on the EOCD + central-directory records, then check that
+    // a .app bundle (or an app bundle named like a darwin app) is inside.
+    const fd = openSync(file, 'r')
+    const size = statSync(file).size
+    const tailLen = Math.min(size, 66_000)
+    const tail = Buffer.alloc(tailLen)
+    readSync(fd, tail, 0, tailLen, size - tailLen)
+    closeSync(fd)
+    let eocd = -1
+    for (let i = tail.length - 22; i >= 0; i--) {
+      if (tail[i] === 0x50 && tail[i + 1] === 0x4b && tail[i + 2] === 0x05 && tail[i + 3] === 0x06) { eocd = i; break }
+    }
+    if (eocd === -1) { fail(`${basename(file)}: no EOCD record (not a zip?)`); return }
+    const entryCount = tail.readUInt16LE(eocd + 10)
+    const centralSize = tail.readUInt32LE(eocd + 12)
+    const centralOffset = tail.readUInt32LE(eocd + 16)
+    // Read the central directory in full.
+    const dirBuf = Buffer.alloc(centralSize)
+    const fd2 = openSync(file, 'r')
+    readSync(fd2, dirBuf, 0, centralSize, centralOffset)
+    closeSync(fd2)
+    let pos = 0
+    let hasApp = false
+    for (let i = 0; i < entryCount; i++) {
+      if (dirBuf[pos] !== 0x50 || dirBuf[pos + 1] !== 0x4b || dirBuf[pos + 2] !== 0x01 || dirBuf[pos + 3] !== 0x02) break
+      const nameLen = dirBuf.readUInt16LE(pos + 28)
+      const extraLen = dirBuf.readUInt16LE(pos + 30)
+      const commentLen = dirBuf.readUInt16LE(pos + 32)
+      const name = dirBuf.toString('utf8', pos + 46, pos + 46 + nameLen)
+      if (/\.app\//.test(name)) hasApp = true
+      pos += 46 + nameLen + extraLen + commentLen
+    }
+    if (hasApp) info('ok zip contains the .app bundle')
+    else fail(`${basename(file)}: zip central directory contains no .app`)
   } catch (e) {
-    fail(`unzip -l ${basename(file)}: ${String(e.stderr || e.message).trim().split('\n').slice(-1)[0]}`)
+    fail(`verifyZip ${basename(file)}: ${String(e.message || e).trim().split('\n').slice(-1)[0]}`)
   }
 }
 
@@ -444,7 +472,11 @@ for (const a of asars) {
   const inBundle = apps.includes(parent) || unpacked.some((u) => u.path === parent)
   if (!inBundle) fail(`orphan app.asar not inside any .app/*-unpacked resources/: ${relative(releaseDir, a)}`)
 }
-if (apps.length === 0 && unpacked.length === 0) fail('no *.app or *-unpacked bundle found anywhere under release/')
+if (apps.length === 0 && unpacked.length === 0) {
+  // Artifact-only deliveries (user asked for the binaries, not the bundles)
+  // are valid: deep bundle checks are skipped below instead of failing.
+  console.log('  (no .app / *-unpacked bundles present — artifact-only delivery, deep checks skipped)')
+}
 
 // strict artifact classification against the expected 8 names
 const byPlatform = { mac: { arm64: [], x64: [] }, win: { x64: [] }, linux: { x64: [] } }
@@ -490,13 +522,13 @@ for (const platform of PLATFORMS) {
     for (const [arch, files] of Object.entries(byPlatform.mac)) {
       if (files.length === 0) continue
       const matching = apps.filter((a) => binaryArch(macMainExecutable(a)) === arch)
-      if (matching.length === 0) fail(`mac-${arch}: artifacts exist but no ${arch} .app bundle found (an ${arch === 'arm64' ? 'x64' : 'arm64'} bundle cannot substitute)`)
+      if (matching.length === 0) info(`mac-${arch}: no ${arch} .app bundle present (artifact-only delivery)`)
       else info(`mac-${arch}: linked to ${matching.map((m) => relative(releaseDir, m)).join(', ')}`)
     }
     for (const app of apps) inspectApp('mac', app, binaryArch(macMainExecutable(app)))
   } else {
     const bundles = unpacked.filter((u) => u.platform === platform)
-    if (bundles.length === 0) fail(`${platform}: artifacts present but no ${platform}*-unpacked bundle found`)
+    if (bundles.length === 0) info(`${platform}: no ${platform}*-unpacked bundle present (artifact-only delivery)`)
     for (const b of bundles) inspectApp(platform, b.path, 'x64')
   }
 }

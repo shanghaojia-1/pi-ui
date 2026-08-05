@@ -81,7 +81,7 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, SESSION_ID + '.jsonl'), seedJsonl(wsReal))
 
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent } as Record<string, string>
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({
       args: [PROJECT_ROOT],

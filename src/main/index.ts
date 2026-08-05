@@ -1,10 +1,11 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isImageAttachments, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
 import { ManagedModeStore } from './managed-mode'
 import { PiRuntime } from './runtime'
 import { windowOptionsForPlatform } from './window-options'
+import { getAgentDir } from '@earendil-works/pi-coding-agent'
 
 const runtime = new PiRuntime()
 let mainWindow: BrowserWindow | null = null
@@ -98,7 +99,30 @@ ipcMain.handle(IPC.chooseWorkspace, () => runtime.chooseWorkspace())
 ipcMain.handle(IPC.openWorkspace, (_event, path: unknown) => runtime.openWorkspace(textArg(path, 'workspace')))
 ipcMain.handle(IPC.newSession, () => runtime.newSession())
 ipcMain.handle(IPC.openSession, (_event, path: unknown) => runtime.openSession(textArg(path, 'session')))
-ipcMain.handle(IPC.prompt, (_event, text: unknown) => runtime.prompt(textArg(text, 'prompt')))
+ipcMain.handle(IPC.deleteSession, (_event, path: unknown) => runtime.deleteSession(textArg(path, 'session')))
+ipcMain.handle(IPC.renameSession, (_event, name: unknown) => runtime.renameSession(textArg(name, 'session name')))
+ipcMain.handle(IPC.compactSession, (_event, instructions: unknown) => {
+  if (instructions !== undefined && instructions !== null && typeof instructions !== 'string') throw new Error('Invalid compact instructions')
+  return runtime.compactSession(instructions === null ? undefined : instructions)
+})
+ipcMain.handle(IPC.copyLastMessage, () => runtime.copyLastMessage())
+ipcMain.handle(IPC.exportSession, () => runtime.exportSession())
+ipcMain.handle(IPC.sessionStats, () => runtime.getSessionStats())
+ipcMain.handle(IPC.reloadSession, () => runtime.reloadSession())
+ipcMain.handle(IPC.quitApp, () => { app.quit() })
+ipcMain.handle(IPC.appInfo, (): AppInfo => ({
+  name: 'Pi Studio',
+  version: app.getVersion(),
+  electron: process.versions.electron,
+  platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux' ? process.platform : 'other',
+  agentDir: getAgentDir(),
+}))
+ipcMain.handle(IPC.prompt, (_event, text: unknown, images: unknown) => {
+  // images is optional: undefined (plain text) is always valid; anything else
+  // must pass the full attachment validation.
+  if (images !== undefined && !isImageAttachments(images)) throw new Error('Invalid image attachments')
+  return runtime.prompt(textArg(text, 'prompt'), images as ImageAttachment[] | undefined)
+})
 ipcMain.handle(IPC.abort, () => runtime.abort())
 ipcMain.handle(IPC.model, (_event, provider: unknown, id: unknown) => runtime.setModel(textArg(provider, 'provider'), textArg(id, 'model')))
 ipcMain.handle(IPC.thinking, (_event, level: unknown) => {
@@ -128,6 +152,10 @@ ipcMain.handle(IPC.logoutProvider, (event, provider: unknown) => {
   return runtime.logoutProvider(provider)
 })
 ipcMain.handle(IPC.refreshModels, () => runtime.refreshModels())
+ipcMain.handle(IPC.customProvider, (_event, config: unknown) => {
+  if (!isCustomProviderConfig(config)) throw new Error('Invalid custom provider config')
+  return runtime.addCustomProvider(config)
+})
 
 /** Native ask→managed confirmation, parented to the main window; cancel-first. */
 async function confirmManagedMode(): Promise<boolean> {

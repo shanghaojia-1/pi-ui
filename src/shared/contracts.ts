@@ -10,6 +10,8 @@ export type DesktopPlatform = 'darwin' | 'win32' | 'linux' | 'other'
 /** Immutable host-platform info exposed to the renderer by the preload. */
 export interface DesktopInfo {
   readonly platform: DesktopPlatform
+  /** Optional forced UI language (test/CI override via PI_STUDIO_LANG). */
+  readonly lang?: 'zh' | 'en'
 }
 
 export interface WorkspaceInfo { path: string; name: string }
@@ -28,6 +30,64 @@ export interface ModelInfo {
   contextWindow?: number
 }
 export interface TextBlock { type: 'text' | 'thinking'; text: string }
+/** Image inside a user message; `data` is the raw base64 payload (no data: URL prefix). */
+export interface ImageBlock { type: 'image'; data: string; mimeType: string }
+/** Attachment pending send from the composer; mirrors ImageBlock. */
+export interface ImageAttachment { data: string; mimeType: string }
+
+/** API flavors a custom provider can speak (models.json `api` values). */
+export const CUSTOM_PROVIDER_APIS = [
+  'openai-completions',
+  'openai-responses',
+  'anthropic-messages',
+  'google-generative-ai',
+] as const
+export type CustomProviderApi = (typeof CUSTOM_PROVIDER_APIS)[number]
+
+export interface CustomProviderConfig {
+  /** Unique provider id (identifier, used in `/model`). */
+  id: string
+  /** Optional display name; falls back to `id`. */
+  name?: string
+  /** API endpoint (http/https). */
+  baseUrl: string
+  api: CustomProviderApi
+  /** Optional static key; empty means env-var / runtime-key auth. */
+  apiKey?: string
+  models: { id: string; name?: string; input?: ('text' | 'image')[]; contextWindow?: number }[]
+}
+
+const CUSTOM_PROVIDER_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const CUSTOM_MODEL_ID_MAX = 256
+
+/**
+ * Whitelist-based validation for addCustomProvider IPC. Everything is
+ * bounded; the payload is written verbatim to models.json, so any
+ * out-of-schema field is rejected here before it can reach disk.
+ */
+export function isCustomProviderConfig(value: unknown): value is CustomProviderConfig {
+  if (!isPlainObject(value)) return false
+  const { id, name, baseUrl, api, apiKey, models } = value as Record<string, unknown>
+  if (typeof id !== 'string' || !CUSTOM_PROVIDER_ID_RE.test(id)) return false
+  if (name !== undefined && (typeof name !== 'string' || name.length < 1 || name.length > 128)) return false
+  if (typeof baseUrl !== 'string' || baseUrl.length < 1 || baseUrl.length > 512) return false
+  if (!/^https?:\/\//i.test(baseUrl)) return false
+  if (!CUSTOM_PROVIDER_APIS.includes(api as CustomProviderApi)) return false
+  if (apiKey !== undefined && (typeof apiKey !== 'string' || apiKey.length < 1 || apiKey.length > 4096)) return false
+  if (!Array.isArray(models) || models.length < 1 || models.length > 20) return false
+  for (const model of models) {
+    if (!isPlainObject(model)) return false
+    const mid = (model as Record<string, unknown>).id
+    if (typeof mid !== 'string' || mid.length < 1 || mid.length > CUSTOM_MODEL_ID_MAX) return false
+    const mname = (model as Record<string, unknown>).name
+    if (mname !== undefined && (typeof mname !== 'string' || mname.length < 1 || mname.length > 128)) return false
+    const input = (model as Record<string, unknown>).input
+    if (input !== undefined && (!Array.isArray(input) || input.length === 0 || input.some((t) => t !== 'text' && t !== 'image'))) return false
+    const ctx = (model as Record<string, unknown>).contextWindow
+    if (ctx !== undefined && (typeof ctx !== 'number' || !Number.isFinite(ctx) || ctx < 1)) return false
+  }
+  return true
+}
 export interface ToolBlock {
   type: 'tool'
   id: string
@@ -38,7 +98,7 @@ export interface ToolBlock {
   patch?: string
   durationMs?: number
 }
-export type MessageBlock = TextBlock | ToolBlock
+export type MessageBlock = TextBlock | ImageBlock | ToolBlock
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'tool' | 'system'
@@ -47,6 +107,21 @@ export interface ChatMessage {
   isStreaming?: boolean
 }
 export interface UsageInfo { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number }
+
+/** `/session` command payload: stats of the active session. */
+export interface SessionStatsInfo {
+  sessionId: string
+  sessionFile: string | null
+  sessionName: string | null
+  userMessages: number
+  assistantMessages: number
+  toolCalls: number
+  totalMessages: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cost: number
+}
 export interface AppError { message: string; detail?: string; recoverable: boolean }
 
 /** Auth state of a model provider as surfaced to the renderer. */
@@ -97,6 +172,15 @@ export interface SettingsPatch {
   httpIdleTimeoutMs?: number
 }
 
+/** Read-only app identity for the about dialog / status bar. */
+export interface AppInfo {
+  name: string
+  version: string
+  electron: string
+  platform: DesktopPlatform
+  agentDir: string
+}
+
 export interface TelemetryInfo {
   tokenRate: number | null
   tokenRateKind: 'live-estimate' | 'final' | 'unavailable'
@@ -134,7 +218,16 @@ export interface PiDesktopApi {
   openWorkspace(path: string): Promise<AppSnapshot>
   newSession(): Promise<AppSnapshot>
   openSession(path: string): Promise<AppSnapshot>
-  sendPrompt(text: string): Promise<void>
+  deleteSession(path: string): Promise<AppSnapshot>
+  renameSession(name: string): Promise<AppSnapshot>
+  compactSession(customInstructions?: string): Promise<AppSnapshot>
+  copyLastMessage(): Promise<boolean>
+  exportSession(): Promise<string | null>
+  getSessionStats(): Promise<SessionStatsInfo | null>
+  reloadSession(): Promise<AppSnapshot>
+  quitApp(): Promise<void>
+  getAppInfo(): Promise<AppInfo>
+  sendPrompt(text: string, images?: ImageAttachment[]): Promise<void>
   abort(): Promise<void>
   setModel(provider: string, id: string): Promise<AppSnapshot>
   setThinking(level: ThinkingLevel): Promise<AppSnapshot>
@@ -143,15 +236,18 @@ export interface PiDesktopApi {
   updateSettings(patch: SettingsPatch): Promise<SettingsSnapshot>
   setRuntimeApiKey(provider: string, key: string): Promise<SettingsSnapshot>
   logoutProvider(provider: string): Promise<SettingsSnapshot>
+  addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot>
   refreshModels(): Promise<SettingsSnapshot>
   onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void
 }
 
 export const IPC = {
   snapshot: 'pi:snapshot', chooseWorkspace: 'pi:choose-workspace', openWorkspace: 'pi:open-workspace',
-  newSession: 'pi:new-session', openSession: 'pi:open-session', prompt: 'pi:prompt', abort: 'pi:abort',
+  newSession: 'pi:new-session', openSession: 'pi:open-session', deleteSession: 'pi:delete-session', prompt: 'pi:prompt', abort: 'pi:abort',
   model: 'pi:model', thinking: 'pi:thinking', settings: 'pi:settings', updateSettings: 'pi:update-settings',
-  runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', refreshModels: 'pi:refresh-models',
+  runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
+  renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
+  exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   changed: 'pi:changed',
 } as const
@@ -254,6 +350,28 @@ export function sanitizeErrorText(value: unknown, fallback: string, knownSecrets
 
 export const HTTP_IDLE_TIMEOUT_MIN_MS = 1000
 export const HTTP_IDLE_TIMEOUT_MAX_MS = 600000
+
+export const MAX_ATTACHED_IMAGES = 5
+export const MAX_ATTACHED_IMAGE_BYTES = 10 * 1024 * 1024
+
+/**
+ * Validates an image-attachment list for IPC: array of { data, mimeType }
+ * entries with base64 data (no data: URL prefix) and an image/* mime type,
+ * bounded in count and per-image size (base64 expands ~1.33×, so the byte
+ * budget is measured against the base64 length / 4 * 3).
+ */
+export function isImageAttachments(value: unknown): value is ImageAttachment[] {
+  if (!Array.isArray(value)) return false
+  if (value.length > MAX_ATTACHED_IMAGES) return false
+  for (const item of value) {
+    if (!isPlainObject(item)) return false
+    const { data, mimeType } = item as Record<string, unknown>
+    if (typeof data !== 'string' || !/^[A-Za-z0-9+/=\s]+$/.test(data)) return false
+    if (typeof mimeType !== 'string' || !/^image\/[a-z0-9.+-]+$/i.test(mimeType)) return false
+    if (Math.floor(data.replace(/\s/g, '').length / 4) * 3 > MAX_ATTACHED_IMAGE_BYTES) return false
+  }
+  return true
+}
 
 export function isHttpIdleTimeoutMs(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)

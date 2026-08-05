@@ -1,9 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import {
   IPC,
+  type AppInfo,
   type AppSnapshot,
+  type CustomProviderConfig,
   type DesktopInfo,
   type DesktopPlatform,
+  type ImageAttachment,
   type PiDesktopApi,
   type SettingsPatch,
   type ThinkingLevel,
@@ -17,7 +20,12 @@ function currentPlatform(): DesktopPlatform {
 }
 
 // Separate readonly namespace so window.pi's method surface stays stable.
-const desktop: DesktopInfo = { platform: currentPlatform() }
+// `lang` is an optional test/CI override (PI_STUDIO_LANG); real installs fall
+// back to the renderer's navigator.language detection.
+const desktop: DesktopInfo = {
+  platform: currentPlatform(),
+  ...(process.env.PI_STUDIO_LANG === 'zh' || process.env.PI_STUDIO_LANG === 'en' ? { lang: process.env.PI_STUDIO_LANG } : {}),
+}
 
 const api: PiDesktopApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.snapshot),
@@ -25,7 +33,16 @@ const api: PiDesktopApi = {
   openWorkspace: (path: string) => ipcRenderer.invoke(IPC.openWorkspace, path),
   newSession: () => ipcRenderer.invoke(IPC.newSession),
   openSession: (path: string) => ipcRenderer.invoke(IPC.openSession, path),
-  sendPrompt: (text: string) => ipcRenderer.invoke(IPC.prompt, text),
+  deleteSession: (path: string) => ipcRenderer.invoke(IPC.deleteSession, path),
+  renameSession: (name: string) => ipcRenderer.invoke(IPC.renameSession, name),
+  compactSession: (customInstructions?: string) => ipcRenderer.invoke(IPC.compactSession, customInstructions),
+  copyLastMessage: () => ipcRenderer.invoke(IPC.copyLastMessage),
+  exportSession: () => ipcRenderer.invoke(IPC.exportSession),
+  getSessionStats: () => ipcRenderer.invoke(IPC.sessionStats),
+  reloadSession: () => ipcRenderer.invoke(IPC.reloadSession),
+  quitApp: () => ipcRenderer.invoke(IPC.quitApp),
+  getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
+  sendPrompt: (text: string, images?: ImageAttachment[]) => ipcRenderer.invoke(IPC.prompt, text, images),
   abort: () => ipcRenderer.invoke(IPC.abort),
   setModel: (provider: string, id: string) => ipcRenderer.invoke(IPC.model, provider, id),
   setThinking: (level: ThinkingLevel) => ipcRenderer.invoke(IPC.thinking, level),
@@ -36,6 +53,7 @@ const api: PiDesktopApi = {
   // The key is forwarded straight to main; it is never stored in the preload.
   setRuntimeApiKey: (provider: string, key: string) => ipcRenderer.invoke(IPC.runtimeApiKey, provider, key),
   logoutProvider: (provider: string) => ipcRenderer.invoke(IPC.logoutProvider, provider),
+  addCustomProvider: (config: CustomProviderConfig) => ipcRenderer.invoke(IPC.customProvider, config),
   refreshModels: () => ipcRenderer.invoke(IPC.refreshModels),
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot): void => listener(snapshot)

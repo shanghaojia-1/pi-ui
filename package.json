@@ -23,8 +23,8 @@
     "test:e2e": "playwright test",
     "icons": "node scripts/generate-icons.mjs",
     "dist": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder",
-    "dist:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
-    "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
+    "dist:mac": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64",
+    "dist:win": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64",
     "dist:linux": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --linux --x64 -c.directories.output=release/linux",
     "dist:all": "npm run build && node scripts/build-all.mjs",
     "verify:artifacts": "node scripts/verify-artifacts.mjs"
@@ -50,7 +50,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "cross-env": "^10.1.0",
-    "electron": "^43.0.0",
+    "electron": "^43.3.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "jsdom": "^29.1.1",
@@ -85,7 +85,6 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
-        "dmg",
         "zip"
       ],
       "identity": null,
@@ -98,19 +97,9 @@
     },
     "win": {
       "target": [
-        "nsis",
         "portable"
       ],
       "icon": "build/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "Pi Studio",
-      "artifactName": "Pi-Studio-${version}-win-${arch}-setup.${ext}"
     },
     "portable": {
       "artifactName": "Pi-Studio-${version}-win-${arch}-portable.${ext}"
@@ -121,8 +110,7 @@
       "executableName": "pi-studio",
       "synopsis": "A focused desktop GUI for Pi coding agent",
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ]
     },
     "appImage": {
@@ -131,5 +119,11 @@
     "deb": {
       "artifactName": "Pi-Studio-${version}-linux-x64.${ext}"
     }
+  },
+  "allowScripts": {
+    "@google/genai@1.52.0": true,
+    "protobufjs@7.6.5": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.25.12": true
   }
 }

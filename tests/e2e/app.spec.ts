@@ -9,10 +9,11 @@ const PROJECT_ROOT = resolve(HERE, '../..')
 const SCREENSHOTS = join(PROJECT_ROOT, 'artifacts', 'screenshots')
 
 const API_METHODS = [
-  'abort', 'chooseWorkspace', 'getSettings', 'getSnapshot', 'logoutProvider',
-  'newSession', 'onSnapshot', 'openSession', 'openWorkspace', 'refreshModels',
-  'sendPrompt', 'setModel', 'setRuntimeApiKey', 'setThinking', 'setToolApprovalMode',
-  'updateSettings',
+  'abort', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deleteSession',
+  'exportSession', 'getAppInfo', 'getSessionStats', 'getSettings', 'getSnapshot', 'logoutProvider',
+  'newSession', 'onSnapshot', 'openSession', 'openWorkspace', 'refreshModels', 'reloadSession',
+  'renameSession', 'sendPrompt', 'setModel', 'setRuntimeApiKey', 'setThinking', 'setToolApprovalMode',
+  'updateSettings', 'quitApp',
 ].sort()
 
 test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
@@ -34,7 +35,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     for (const dir of [tempHome, tempAgent, tempWorkspace]) mkdirSync(dir)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E sandbox workspace\n')
 
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent } as Record<string, string>
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({
       args: [PROJECT_ROOT],
@@ -202,6 +203,55 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     expect(afterAll.thinkingLevel).toBe('off') // no model -> always clamped to 'off'
   })
 
+  test('image attachments: plain text never rejected, valid images pass IPC, bad payloads rejected', async () => {
+    // Regression guard: sendPrompt without attachments (undefined images) must
+    // never be refused by the IPC validation layer. In the sandbox there is no
+    // model, so the run itself is refused at preflight/runtime level with a
+    // different message — which is exactly what distinguishes the two layers.
+    const send = (args: unknown[]): Promise<string> =>
+      page.evaluate(
+        (a: unknown[]) =>
+          (window.pi.sendPrompt as unknown as (...rest: unknown[]) => Promise<unknown>)(...a).then(
+            () => 'resolved',
+            (e: Error) => e.message,
+          ),
+        args,
+      )
+
+    const plain = await send(['hello from plain text'])
+    expect(plain).not.toContain('Invalid image')
+    expect(plain).not.toContain('Invalid prompt')
+
+    // Empty attachment array is equivalent to no attachments and must pass too.
+    const empty = await send(['hello', []])
+    expect(empty).not.toContain('Invalid image')
+
+    // A valid PNG attachment crosses IPC and reaches the runtime layer (the
+    // sandbox run itself fails at the agent layer for missing credentials,
+    // but never for images).
+    const png = { data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', mimeType: 'image/png' }
+    const withImage = await send(['describe this', [png]])
+    expect(withImage).not.toContain('Invalid image')
+
+    // Malformed payloads are rejected by IPC validation before any run.
+    for (const bad of [
+      [{ data: '###not-base64', mimeType: 'image/png' }],
+      [{ data: 'AAAA', mimeType: 'text/plain' }],
+      [{ data: 'AAAA', mimeType: 'image' }],
+      'not-an-array',
+      42,
+    ]) {
+      const outcome = await send(['hello', bad])
+      expect(outcome).toContain('Invalid image attachments')
+    }
+
+    // Main process survived every rejection; no stray messages were produced
+    // (the sandbox runs fail at the agent layer, never inside the UI state).
+    const snap = await snapshot()
+    expect(snap.messages).toEqual([])
+    expect(pageErrors).toEqual([])
+  })
+
   test('new session is safe offline and reflected in the sidebar', async () => {
     const before = await snapshot()
     expect(before.activeSessionPath).toBeTruthy()
@@ -217,6 +267,249 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     // a fresh session with no models surfaces the recoverable model-fallback notice
     expect(after.error === null || (after.error as { message: string }).message === 'Model fallback').toBe(true)
     await expect(page.locator('.session-item-active')).toHaveCount(1)
+    expect(pageErrors).toEqual([])
+  })
+
+  test('delete session: gated paths, inactive removed from disk, active replaced by fresh session', async () => {
+    // The sandbox starts with one (empty) session whose JSONL does not exist
+    // yet; fabricate two valid session files directly in the agent dir so both
+    // the inactive and the active deletion paths are exercised regardless of
+    // the tests that ran before this one. A newSession() call then forces the
+    // sidebar refresh that picks them up.
+    const safePath = `--${realpathSync(tempWorkspace).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+    const sessionDir = join(tempAgent, 'sessions', safePath)
+    mkdirSync(sessionDir, { recursive: true })
+    const now = new Date()
+    const fabricate = (id: string): string => {
+      const header = { type: 'session', version: 3, id, timestamp: now.toISOString(), cwd: realpathSync(tempWorkspace) }
+      const message = { type: 'message', id: 'm1', timestamp: now.toISOString(), message: { role: 'user', content: `fabricated session ${id}`, timestamp: now.getTime() } }
+      const file = join(sessionDir, `${now.toISOString().replace(/[:.]/g, '-')}_${id}.jsonl`)
+      writeFileSync(file, `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`)
+      return file
+    }
+    const fabricatedInactive = fabricate(`e2e-inactive-${Date.now()}`)
+    const fabricatedActive = fabricate(`e2e-active-${Date.now()}`)
+    await page.evaluate(() => window.pi.newSession())
+
+    await expect
+      .poll(() => page.evaluate(() => window.pi.getSnapshot().then((s) => (s.sessions as { path: string }[]).length)))
+      .toBeGreaterThanOrEqual(3)
+    const before = (await snapshot()) as unknown as {
+      sessions: { path: string }[]
+      activeSessionPath: string | null
+      messages: unknown[]
+      runState: string
+      error: { message: string } | null
+    }
+    expect(before.sessions.length).toBeGreaterThanOrEqual(2)
+
+    // Non-string paths rejected at the IPC layer before any state is touched.
+    for (const bad of [42, {}, null]) {
+      const outcome = await page.evaluate(
+        (p) => window.pi.deleteSession(p as never).then(() => 'resolved', (e: Error) => e.message),
+        bad,
+      )
+      expect(outcome).toContain('Invalid')
+    }
+
+    // Empty string passes the IPC string gate but must be a safe no-op that
+    // deletes nothing (the runtime records the failure and resolves).
+    const empty = await page.evaluate(
+      (p) => window.pi.deleteSession(p).then(() => 'resolved', (e: Error) => e.message),
+      '',
+    )
+    expect(empty).toBe('resolved')
+
+    // A path outside the workspace session allowlist must never delete anything:
+    // the call resolves with a recorded error and the file survives.
+    const workspaceFile = join(tempWorkspace, 'README.md')
+    const outside = await page.evaluate(
+      (p) => window.pi.deleteSession(p).then(() => 'resolved', (e: Error) => e.message),
+      workspaceFile,
+    )
+    expect(outside).toBe('resolved')
+    expect(existsSync(workspaceFile)).toBe(true)
+    const afterOutside = await snapshot()
+    expect(afterOutside.error).not.toBeNull()
+
+    // Deleting an INACTIVE session removes its JSONL and the sidebar entry;
+    // the active session is untouched.
+    await page.evaluate((p) => window.pi.deleteSession(p), fabricatedInactive)
+    await expect
+      .poll(() => page.evaluate((p) => window.pi.getSnapshot().then((s) => s.sessions.some((x) => x.path === p)), fabricatedInactive))
+      .toBe(false)
+    expect(existsSync(fabricatedInactive)).toBe(false)
+    const afterInactive = await snapshot()
+    expect(afterInactive.activeSessionPath).toBe(before.activeSessionPath)
+    expect(afterInactive.messages).toEqual([])
+
+    // Deleting the ACTIVE session tears it down and creates a fresh empty one.
+    await page.evaluate((p) => window.pi.openSession(p), fabricatedActive)
+    await expect
+      .poll(() => page.evaluate((p) => window.pi.getSnapshot().then((s) => s.activeSessionPath), fabricatedActive))
+      .toBe(fabricatedActive)
+    await page.evaluate((p) => window.pi.deleteSession(p), fabricatedActive)
+    await expect
+      .poll(() => page.evaluate((p) => window.pi.getSnapshot().then((s) => s.activeSessionPath), fabricatedActive))
+      .not.toBe(fabricatedActive)
+    expect(existsSync(fabricatedActive)).toBe(false)
+    const fresh = await snapshot()
+    expect(fresh.messages).toEqual([])
+    expect(fresh.runState).toBe('idle')
+    expect(fresh.error === null || (fresh.error as { message: string }).message === 'Model fallback').toBe(true)
+    expect(pageErrors).toEqual([])
+  })
+
+  test('custom provider: invalid configs rejected, valid one lands in models.json and the catalog', async () => {
+    const valid: {
+      id: string
+      name: string
+      baseUrl: string
+      api: 'openai-completions'
+      apiKey: string
+      models: { id: string; name?: string; input?: ('text' | 'image')[] }[]
+    } = {
+      id: 'my-ollama',
+      name: '本地 Ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      api: 'openai-completions',
+      apiKey: 'dummy',
+      models: [{ id: 'llama3.1:8b' }, { id: 'qwen2.5-coder:7b', name: 'Qwen 2.5 Coder', input: ['text', 'image'] }],
+    }
+
+    // Invalid payloads are rejected at the IPC gate before touching disk.
+    for (const bad of [
+      null,
+      'x',
+      { ...valid, id: 'has space' },
+      { ...valid, id: '中文' },
+      { ...valid, baseUrl: 'localhost:11434' },
+      { ...valid, api: 'magic-api' },
+      { ...valid, models: [] },
+      { ...valid, models: [{ id: '' }] },
+    ]) {
+      const outcome = await page.evaluate(
+        (c) => window.pi.addCustomProvider(c as never).then(() => 'resolved', (e: Error) => e.message),
+        bad,
+      )
+      expect(outcome).toContain('Invalid custom provider')
+    }
+
+    // Pre-existing models.json content must survive the merge: seed one.
+    const modelsPath = join(tempAgent, 'models.json')
+    writeFileSync(modelsPath, JSON.stringify({ providers: { 'existing-proxy': { baseUrl: 'https://proxy.example/v1', api: 'openai-responses', models: [{ id: 'proxy-model' }] } } }, null, 2))
+
+    const result = await page.evaluate((c) => window.pi.addCustomProvider(c), valid)
+    expect(result.error).toBeNull()
+
+    // The new provider is listed with its models; the seeded provider survived.
+    const settings = await page.evaluate(() => window.pi.getSettings())
+    const providers = settings.providers as { id: string; name: string; availableModelCount: number }[]
+    const mine = providers.find((p) => p.id === 'my-ollama')
+    expect(mine).toBeTruthy()
+    expect(mine!.name).toBe('本地 Ollama')
+    expect(mine!.availableModelCount).toBe(2)
+    expect(providers.some((p) => p.id === 'existing-proxy')).toBe(true)
+
+    // The runtime model catalog exposes the custom models to the app.
+    const snap = await snapshot()
+    const models = snap.models as { provider: string; id: string }[]
+    expect(models.some((m) => m.provider === 'my-ollama' && m.id === 'llama3.1:8b')).toBe(true)
+    expect(models.some((m) => m.provider === 'my-ollama' && m.id === 'qwen2.5-coder:7b')).toBe(true)
+
+    // models.json on disk carries exactly the merged providers, no tmp residue.
+    const onDisk = JSON.parse(readFileSync(modelsPath, 'utf8')) as { providers: Record<string, unknown> }
+    expect(Object.keys(onDisk.providers).sort()).toEqual(['existing-proxy', 'my-ollama'])
+    const written = onDisk.providers['my-ollama'] as { baseUrl: string; api: string; apiKey: string; models: { id: string; input?: string[] }[] }
+    expect(written.baseUrl).toBe('http://localhost:11434/v1')
+    expect(written.api).toBe('openai-completions')
+    expect(written.models).toHaveLength(2)
+    expect(written.models[1]?.input).toEqual(['text', 'image'])
+    expect(existsSync(`${modelsPath}.tmp`)).toBe(false)
+    expect(pageErrors).toEqual([])
+  })
+
+  test('slash commands: menu opens on /, filters, dispatches GUI actions and session IPC', async () => {
+    // Self-contained: add a provider so the composer is enabled regardless of
+    // which tests ran before this one.
+    await page.evaluate(() =>
+      window.pi.addCustomProvider({
+        id: 'slash-ollama',
+        name: 'Slash Ollama',
+        baseUrl: 'http://localhost:11434/v1',
+        api: 'openai-completions',
+        // The dummy key marks auth as configured so the model becomes
+        // available (Ollama ignores the value; the SDK treats it as configured).
+        apiKey: 'dummy',
+        models: [{ id: 'llama3.1:8b' }],
+      }),
+    )
+    const composer = page.getByRole('textbox', { name: '消息输入' })
+    await expect(composer).toBeEnabled()
+
+    // Typing / opens the menu with the full command list.
+    await composer.fill('/')
+    await expect(page.getByRole('listbox', { name: '斜杠命令' })).toBeVisible()
+    expect(await page.locator('.slash-item').count()).toBeGreaterThanOrEqual(12)
+
+    // Filtering narrows the list; non-matching commands disappear.
+    await composer.fill('/comp')
+    await expect(page.getByText('/compact', { exact: true })).toBeVisible()
+    expect(await page.locator('.slash-item').count()).toBe(1)
+
+    // /settings opens the settings sheet (GUI action mapping).
+    await composer.fill('/settings')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog', { name: '设置' })).toBeVisible()
+    await page.getByRole('button', { name: '关闭设置' }).click()
+    await expect(composer).toHaveValue('') // command cleared the input
+
+    // /name with an argument renames the active session (IPC mapping).
+    await composer.fill('/name 重构计划')
+    await page.keyboard.press('Enter')
+    await expect
+      .poll(() => page.evaluate(() => window.pi.getSnapshot().then((s) => s.sessions.find((x) => x.path === s.activeSessionPath)?.title)))
+      .toBe('重构计划')
+    await expect(composer).toHaveValue('')
+
+    // /name without an argument completes to '/name ' and keeps the caret.
+    await composer.fill('/name')
+    await page.keyboard.press('Enter')
+    await expect(composer).toHaveValue('/name ')
+    await composer.fill('')
+
+    // /session stats dialog: renders stats for the active session.
+    await composer.fill('/session')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog', { name: '会话统计' })).toBeVisible()
+    await page.getByRole('dialog', { name: '会话统计' }).getByRole('button', { name: '关闭', exact: true }).click()
+
+    // /copy with no assistant messages is a safe no-op (returns false).
+    const copied = await page.evaluate(() => window.pi.copyLastMessage())
+    expect(copied).toBe(false)
+
+    // /new starts a fresh session (GUI action mapping).
+    await composer.fill('/new')
+    await page.keyboard.press('Enter')
+    await expect(composer).toHaveValue('')
+    await expect(page.locator('.session-item-active')).toHaveCount(1)
+    expect(pageErrors).toEqual([])
+  })
+
+  test('app info: version surfaced in the status bar and the about dialog', async () => {
+    const info = await page.evaluate(() => window.pi.getAppInfo())
+    expect(info.version).toMatch(/^\d+\.\d+\.\d+$/)
+    expect(info.name).toBe('Pi Studio')
+    expect(info.electron).toMatch(/^\d+\./)
+
+    // Status bar version chip opens the about dialog.
+    const chip = page.locator('.status-version')
+    await expect(chip).toHaveText(`v${info.version}`)
+    await chip.click()
+    await expect(page.getByRole('dialog', { name: '关于' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: '关于' }).getByText(`v${info.version}`, { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '关闭' }).click()
+    await expect(page.getByRole('dialog', { name: '关于' })).not.toBeVisible()
     expect(pageErrors).toEqual([])
   })
 
@@ -466,7 +759,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
   const pageErrors: string[] = []
 
   async function launch(): Promise<void> {
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent } as Record<string, string>
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()

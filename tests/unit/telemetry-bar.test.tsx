@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import type { TelemetryInfo, UsageInfo } from '../../src/shared/contracts'
 import TelemetryBar from '../../src/renderer/src/components/TelemetryBar'
+import { I18nProvider } from '../../src/renderer/src/lib/i18n'
 
 const usage: UsageInfo = { input: 1000, output: 500, cacheRead: 200, cacheWrite: 50, cost: 0.01 }
 
@@ -28,7 +29,7 @@ function telemetry(over: Partial<TelemetryInfo> = {}): TelemetryInfo {
 
 describe('TelemetryBar', () => {
   it('renders an em dash with an explanatory tooltip for every null metric', () => {
-    const html = strip(renderToString(<TelemetryBar telemetry={telemetry()} usage={usage} />))
+    const html = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry()} usage={usage} /></I18nProvider>))
     expect(html).toContain('role="status"')
     expect(html).toContain('aria-label="运行指标"')
     // speed / cache / context / ttft / output all null → five dashes
@@ -42,14 +43,14 @@ describe('TelemetryBar', () => {
 
   it('live-estimate rate shows ≈ with the pulsing live class; final rate is plain', () => {
     const liveHtml = strip(
-      renderToString(<TelemetryBar telemetry={telemetry({ tokenRate: 8.2, tokenRateKind: 'live-estimate' })} usage={usage} />),
+      renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ tokenRate: 8.2, tokenRateKind: 'live-estimate' })} usage={usage} /></I18nProvider>),
     )
     expect(liveHtml).toContain('≈8.2 tok/s')
     expect(liveHtml).toContain('telemetry-live')
     expect(liveHtml).toContain('实时估算 token 速率')
 
     const finalHtml = strip(
-      renderToString(<TelemetryBar telemetry={telemetry({ tokenRate: 120.4, tokenRateKind: 'final' })} usage={usage} />),
+      renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ tokenRate: 120.4, tokenRateKind: 'final' })} usage={usage} /></I18nProvider>),
     )
     expect(finalHtml).toContain('120 tok/s')
     expect(finalHtml).not.toContain('≈')
@@ -58,7 +59,7 @@ describe('TelemetryBar', () => {
   })
 
   it('cache hit rate renders as a percentage; title/aria state the cacheRead/(input+cacheRead+cacheWrite) formula', () => {
-    const html = strip(renderToString(<TelemetryBar telemetry={telemetry({ cacheHitRate: 0.25 })} usage={usage} />))
+    const html = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ cacheHitRate: 0.25 })} usage={usage} /></I18nProvider>))
     expect(html).toContain('25%')
     // explicit formula with cache write in the denominator (usage: 1.0k in, 200 read, 50 write)
     expect(html).toContain('缓存命中率 = 缓存读取 /（输入 + 缓存读取 + 缓存写入）')
@@ -67,13 +68,27 @@ describe('TelemetryBar', () => {
     expect(html).toContain('aria-label="缓存命中率 25%（缓存读取 200 / 输入 1.0k + 缓存读取 200 + 缓存写入 50）"')
   })
 
+  it('cache hit rate uses adaptive precision: decimals appear only when they matter', () => {
+    // 99.97% must not collapse to "100%" and 95.3% keeps one decimal.
+    const high = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ cacheHitRate: 0.9997 })} usage={usage} /></I18nProvider>))
+    expect(high).toContain('99.97%')
+    expect(high).not.toContain('100%')
+    const mid = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ cacheHitRate: 0.953 })} usage={usage} /></I18nProvider>))
+    expect(mid).toContain('95.3%')
+    // Low rates stay integers: 31.25% → 31%.
+    const low = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ cacheHitRate: 0.3125 })} usage={usage} /></I18nProvider>))
+    expect(low).toContain('31%')
+    expect(low).not.toContain('31.25%')
+  })
+
   it('context shows estimated ≈ tokens/window with a percent progress bar', () => {
     const html = strip(
       renderToString(
+        <I18nProvider initialLang="zh">
         <TelemetryBar
           telemetry={telemetry({ contextTokens: 1234, contextWindow: 8192, contextPercent: 15, contextEstimated: true })}
           usage={usage}
-        />,
+        /></I18nProvider>,
       ),
     )
     expect(html).toContain('≈1.2k / 8.2k')
@@ -85,7 +100,9 @@ describe('TelemetryBar', () => {
   it('context percent falls back to tokens/window when percent is null', () => {
     const html = strip(
       renderToString(
-        <TelemetryBar telemetry={telemetry({ contextTokens: 1000, contextWindow: 2000, contextPercent: null })} usage={usage} />,
+        <I18nProvider initialLang="zh">
+          <TelemetryBar telemetry={telemetry({ contextTokens: 1000, contextWindow: 2000, contextPercent: null })} usage={usage} />
+        </I18nProvider>,
       ),
     )
     expect(html).toContain('1.0k / 2.0k') // no ≈ when not estimated
@@ -94,7 +111,7 @@ describe('TelemetryBar', () => {
 
   it('context without tokens renders a dash and no track', () => {
     const html = strip(
-      renderToString(<TelemetryBar telemetry={telemetry({ contextTokens: null, contextWindow: 8192 })} usage={usage} />),
+      renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ contextTokens: null, contextWindow: 8192 })} usage={usage} /></I18nProvider>),
     )
     expect(html).toContain('— / 8.2k')
     expect(html).not.toContain('telemetry-ctx-track')
@@ -102,14 +119,14 @@ describe('TelemetryBar', () => {
 
   it('renders TTFT and latest output tokens when available', () => {
     const html = strip(
-      renderToString(<TelemetryBar telemetry={telemetry({ ttftMs: 1250, latestOutputTokens: 512 })} usage={usage} />),
+      renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry({ ttftMs: 1250, latestOutputTokens: 512 })} usage={usage} /></I18nProvider>),
     )
     expect(html).toContain('1.3s')
     expect(html).toContain('512 tok')
   })
 
   it('marks secondary items so narrow screens can hide them while keeping speed/context', () => {
-    const html = strip(renderToString(<TelemetryBar telemetry={telemetry()} usage={usage} />))
+    const html = strip(renderToString(<I18nProvider initialLang="zh"><TelemetryBar telemetry={telemetry()} usage={usage} /></I18nProvider>))
     expect(html.match(/telemetry-secondary/g)).toHaveLength(3) // cache, ttft, output
     expect(html).toContain('telemetry-speed')
     expect(html).toContain('telemetry-ctx')

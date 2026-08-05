@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { FolderOpen, LoaderCircle, TriangleAlert, X } from 'lucide-react'
-import type { AppSnapshot, ThinkingLevel } from '@shared/contracts'
+import type { AppInfo, AppSnapshot, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
 import { errorMessage, useMediaQuery, useSnapshot } from './hooks'
 import { formatCost, formatTokens } from './lib/format'
+import { useI18n } from './lib/i18n'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import MessageList from './components/MessageList'
@@ -16,6 +17,7 @@ const platform = window.desktop?.platform ?? 'other'
 const isMac = platform === 'darwin'
 
 export default function App() {
+  const { t } = useI18n()
   const { snapshot, loadError } = useSnapshot()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
@@ -25,6 +27,9 @@ export default function App() {
   const [dismissedError, setDismissedError] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settingsSection, setSettingsSection] = useState<'approval' | null>(null)
+  const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null)
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const composerRef = useRef<ComposerHandle>(null)
   const snapRef = useRef<AppSnapshot | null>(snapshot)
   snapRef.current = snapshot
@@ -72,10 +77,90 @@ export default function App() {
     }
   }, [])
 
-  const handleSend = useCallback((text: string) => {
+  const handleDeleteSession = useCallback(async (path: string) => {
+    setToast(null)
+    try {
+      await window.pi.deleteSession(path)
+    } catch (e) {
+      setToast(errorMessage(e))
+    }
+  }, [])
+
+  // Open the settings sheet, optionally landing on the tool-approval section
+  // (used by the TopBar badge so the danger partition is visible and focused).
+  const openSettings = useCallback((section: 'approval' | null = null) => {
+    setSettingsSection(section)
+    setSettingsOpen(true)
+  }, [])
+
+  /** Slash-command dispatch from the composer's `/` menu. */
+  const handleCommand = useCallback(
+    (commandId: string, arg: string) => {
+      setToast(null)
+      switch (commandId) {
+        case 'new':
+          void handleNewSession()
+          return
+        case 'resume':
+          setSidebarOpen(true)
+          // Focus the first session item so keyboard users land in the list.
+          requestAnimationFrame(() => document.querySelector<HTMLElement>('.session-item .session-open')?.focus())
+          return
+        case 'model':
+          // Open the topbar model dropdown (first select in the topbar).
+          document.querySelector<HTMLElement>('.topbar .select-trigger')?.click()
+          return
+        case 'settings':
+        case 'login':
+          openSettings()
+          return
+        case 'name':
+          if (arg === '') {
+            setToast(t('app.command.nameHint'))
+            return
+          }
+          window.pi.renameSession(arg).catch((e: unknown) => setToast(errorMessage(e)))
+          return
+        case 'compact':
+          window.pi.compactSession(arg !== '' ? arg : undefined).catch((e: unknown) => setToast(errorMessage(e)))
+          setToast(t('app.command.compacting'))
+          return
+        case 'copy':
+          window.pi.copyLastMessage().then(
+            (ok) => setToast(ok ? t('app.command.copied') : t('app.command.nothingToCopy')),
+            (e: unknown) => setToast(errorMessage(e)),
+          )
+          return
+        case 'export':
+          window.pi.exportSession().then(
+            (path) => setToast(path !== null ? t('app.command.exported', { path }) : t('app.command.exportCancelled')),
+            (e: unknown) => setToast(errorMessage(e)),
+          )
+          return
+        case 'session':
+          window.pi.getSessionStats().then(
+            (stats) => setSessionStats(stats),
+            (e: unknown) => setToast(errorMessage(e)),
+          )
+          return
+        case 'reload':
+          window.pi.reloadSession().catch((e: unknown) => setToast(errorMessage(e)))
+          setToast(t('app.command.reloading'))
+          return
+        case 'quit':
+          void window.pi.quitApp()
+          return
+        default:
+          setToast(t('app.command.unknown', { cmd: commandId }))
+      }
+    },
+    [handleNewSession, openSettings, t],
+  )
+
+  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
     setToast(null)
     setPendingText(text)
-    window.pi.sendPrompt(text).catch((e: unknown) => {
+    window.pi.sendPrompt(text, images).catch((e: unknown) => {
       setPendingText(null)
       setToast(errorMessage(e))
     })
@@ -101,13 +186,6 @@ export default function App() {
     } catch (e) {
       setToast(errorMessage(e))
     }
-  }, [])
-
-  // Open the settings sheet, optionally landing on the tool-approval section
-  // (used by the TopBar badge so the danger partition is visible and focused).
-  const openSettings = useCallback((section: 'approval' | null = null) => {
-    setSettingsSection(section)
-    setSettingsOpen(true)
   }, [])
 
   // Keyboard shortcuts
@@ -153,20 +231,25 @@ export default function App() {
     setDismissedError(false)
   }, [snapshot?.error])
 
+  // Load app identity once for the status-bar version + about dialog.
+  useEffect(() => {
+    window.pi.getAppInfo().then(setAppInfo, () => undefined)
+  }, [])
+
   if (snapshot === null) {
     return (
       <div className={`splash${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
         {loadError === null ? (
           <>
             <LoaderCircle size={26} className="splash-spin" aria-hidden="true" />
-            <p>正在连接…</p>
+            <p>{t('app.splash.connecting')}</p>
           </>
         ) : (
           <>
             <TriangleAlert size={26} aria-hidden="true" />
-            <p>无法连接渲染进程：{loadError}</p>
+            <p>{t('app.splash.failed')}{loadError}</p>
             <button type="button" className="btn" onClick={() => window.location.reload()}>
-              重试
+              {t('common.retry')}
             </button>
           </>
         )}
@@ -181,12 +264,12 @@ export default function App() {
   const composerDisabled = workspace === null || noModels
   const composerPlaceholder =
     workspace === null
-      ? '请先打开工作区'
+      ? t('composer.placeholder.workspace')
       : noModels
-        ? '未找到可用模型，请检查 API 鉴权'
+        ? t('composer.placeholder.noModels')
         : running
-          ? '继续输入，发送后作为 follow-up 排队…'
-          : '描述任务，Pi 将在当前工作区执行…'
+          ? t('composer.placeholder.followUp')
+          : t('composer.placeholder.idle')
 
   const error = snapshot.error !== null && !dismissedError ? snapshot.error : null
   const totalTokens = snapshot.usage.input + snapshot.usage.output + snapshot.usage.cacheRead
@@ -206,6 +289,7 @@ export default function App() {
           onOpenDir={() => void handleOpenDir()}
           onNewSession={() => void handleNewSession()}
           onOpenSession={(path) => void handleOpenSession(path)}
+          onDeleteSession={(path) => void handleDeleteSession(path)}
           onOpenSettings={() => openSettings()}
         />
       </div>
@@ -231,13 +315,13 @@ export default function App() {
                   <div className="banner-content">
                     <div className="banner-title">{error.message}</div>
                     {error.detail !== undefined ? <div className="banner-detail">{error.detail}</div> : null}
-                    {error.recoverable ? <div className="banner-recover">可重试 — 发送新消息后继续</div> : null}
+                    {error.recoverable ? <div className="banner-recover">{t('app.banner.recoverable')}</div> : null}
                   </div>
                   <button
                     type="button"
                     className="banner-dismiss"
                     onClick={() => setDismissedError(true)}
-                    aria-label="关闭错误提示"
+                    aria-label={t('common.close')}
                   >
                     <X size={13} aria-hidden="true" />
                   </button>
@@ -247,8 +331,8 @@ export default function App() {
                 <div className="banner banner-warn">
                   <TriangleAlert size={14} className="banner-icon" aria-hidden="true" />
                   <div className="banner-content">
-                    <div className="banner-title">未找到可用模型</div>
-                    <div className="banner-detail">请检查模型 API 配置与登录状态，然后重新打开工作区。</div>
+                    <div className="banner-title">{t('app.noModels.title')}</div>
+                    <div className="banner-detail">{t('app.noModels.detail')}</div>
                   </div>
                 </div>
               ) : null}
@@ -258,13 +342,13 @@ export default function App() {
           {workspace === null ? (
             <div className="empty-workspace">
               <FolderOpen size={38} strokeWidth={1.2} aria-hidden="true" />
-              <h2>打开一个工作区</h2>
-              <p>选择项目目录后，即可开始新任务、管理会话，并让 Pi 在真实代码上工作。</p>
+              <h2>{t('app.emptyWorkspace.title')}</h2>
+              <p>{t('app.emptyWorkspace.desc')}</p>
               <button type="button" className="btn btn-primary btn-lg" onClick={() => void handleOpenDir()} disabled={busy}>
                 <FolderOpen size={15} aria-hidden="true" />
-                打开目录
+                {t('app.emptyWorkspace.open')}
               </button>
-              <p className="shortcut-hint">快捷键 ⇧⌘O</p>
+              <p className="shortcut-hint">{t('app.shortcut.openDir')}</p>
             </div>
           ) : (
             <>
@@ -281,6 +365,7 @@ export default function App() {
                 running={running}
                 onSend={handleSend}
                 onStop={handleStop}
+                onCommand={handleCommand}
               />
             </>
           )}
@@ -292,12 +377,17 @@ export default function App() {
             {snapshot.statusText}
           </span>
           <span className="statusbar-right">
-            {snapshot.queueCount > 0 ? <span className="status-queue">队列 +{snapshot.queueCount}</span> : null}
+            {snapshot.queueCount > 0 ? <span className="status-queue">{t('app.status.queue', { n: snapshot.queueCount })}</span> : null}
             {totalTokens > 0 ? (
               <span className="status-usage">
                 {formatTokens(snapshot.usage.input)} in · {formatTokens(snapshot.usage.output)} out ·{' '}
                 {formatCost(snapshot.usage.cost)}
               </span>
+            ) : null}
+            {appInfo !== null ? (
+              <button type="button" className="status-version" onClick={() => setAboutOpen(true)} title={`${t('app.about.title', { name: appInfo.name })}`}>
+                v{appInfo.version}
+              </button>
             ) : null}
           </span>
         </footer>
@@ -307,6 +397,89 @@ export default function App() {
         {isMac ? <div className="drag-strip" aria-hidden="true" /> : null}
         <RightPanel snapshot={snapshot} />
       </div>
+
+      {aboutOpen && appInfo !== null ? (
+        <div
+          className="stats-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('app.about.title', { name: appInfo.name })}
+          onClick={() => setAboutOpen(false)}
+        >
+          <div className="stats-box" onClick={(e) => e.stopPropagation()}>
+            <div className="stats-head">
+              <h3>{t('app.about.title', { name: appInfo.name })}</h3>
+              <button type="button" className="btn-icon" onClick={() => setAboutOpen(false)} aria-label={t('common.close')}>
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="stats-grid">
+              <span>{t('app.about.version')}</span>
+              <span>v{appInfo.version}</span>
+              <span>{t('app.about.electron')}</span>
+              <span>{appInfo.electron}</span>
+              <span>{t('app.about.platform')}</span>
+              <span>{appInfo.platform}</span>
+              <span>{t('app.about.agentDir')}</span>
+              <code className="stats-mono">{appInfo.agentDir}</code>
+              <span>{t('app.about.workspace')}</span>
+              <code className="stats-mono">{workspace?.path ?? t('app.about.notOpen')}</code>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {sessionStats !== null ? (
+        <div
+          className="stats-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('app.sessionStats.title')}
+          onClick={() => setSessionStats(null)}
+        >
+          <div className="stats-box" onClick={(e) => e.stopPropagation()}>
+            <div className="stats-head">
+              <h3>{t('app.sessionStats.title')}</h3>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => setSessionStats(null)}
+                aria-label={t('common.close')}
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="stats-grid">
+              <span>{t('app.sessionStats.id')}</span>
+              <code className="stats-mono">{sessionStats.sessionId}</code>
+              {sessionStats.sessionName !== null ? (
+                <>
+                  <span>{t('app.sessionStats.name')}</span>
+                  <span>{sessionStats.sessionName}</span>
+                </>
+              ) : null}
+              <span>{t('app.sessionStats.file')}</span>
+              <code className="stats-mono">{sessionStats.sessionFile ?? t('app.sessionStats.notFlushed')}</code>
+              <span>{t('app.sessionStats.userMsgs')}</span>
+              <span>{sessionStats.userMessages}</span>
+              <span>{t('app.sessionStats.assistantMsgs')}</span>
+              <span>{sessionStats.assistantMessages}</span>
+              <span>{t('app.sessionStats.toolCalls')}</span>
+              <span>{sessionStats.toolCalls}</span>
+              <span>{t('app.sessionStats.totalMsgs')}</span>
+              <span>{sessionStats.totalMessages}</span>
+              <span>{t('app.sessionStats.inputTokens')}</span>
+              <span>{formatTokens(sessionStats.inputTokens)}</span>
+              <span>{t('app.sessionStats.outputTokens')}</span>
+              <span>{formatTokens(sessionStats.outputTokens)}</span>
+              <span>{t('app.sessionStats.cacheRead')}</span>
+              <span>{formatTokens(sessionStats.cacheReadTokens)}</span>
+              <span>{t('app.sessionStats.cost')}</span>
+              <span>{formatCost(sessionStats.cost)}</span>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {settingsOpen ? (
         <SettingsPanel

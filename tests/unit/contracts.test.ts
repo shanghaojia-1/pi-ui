@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  IPC, isSettingsPatch, isThinkingLevel, isToolApprovalMode, sanitizeErrorText,
+  IPC, isCustomProviderConfig, isImageAttachments, isSettingsPatch, isThinkingLevel, isToolApprovalMode, sanitizeErrorText,
   type AppSnapshot, type SettingsSnapshot, type ToolApprovalMode,
 } from '../../src/shared/contracts'
 
@@ -340,5 +340,118 @@ describe('IPC channel contract', () => {
 
   it('uses the pi: namespace for all channels', () => {
     for (const value of Object.values(IPC)) expect(value.startsWith('pi:')).toBe(true)
+  })
+})
+
+describe('isImageAttachments', () => {
+  const png = { data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', mimeType: 'image/png' }
+
+  it('accepts a valid single attachment', () => {
+    expect(isImageAttachments([png])).toBe(true)
+  })
+
+  it('accepts multiple attachments up to the limit', () => {
+    const many = Array.from({ length: 5 }, () => ({ ...png }))
+    expect(isImageAttachments(many)).toBe(true)
+  })
+
+  it('rejects more than the limit', () => {
+    const tooMany = Array.from({ length: 6 }, () => ({ ...png }))
+    expect(isImageAttachments(tooMany)).toBe(false)
+  })
+
+  it('accepts an empty array (equivalent to no attachments)', () => {
+    expect(isImageAttachments([])).toBe(true)
+  })
+
+  it('rejects undefined, null and non-arrays', () => {
+    expect(isImageAttachments(undefined)).toBe(false)
+    expect(isImageAttachments(null)).toBe(false)
+    expect(isImageAttachments('image')).toBe(false)
+    expect(isImageAttachments({ data: 'x', mimeType: 'image/png' })).toBe(false)
+  })
+
+  it('rejects non-image mime types', () => {
+    expect(isImageAttachments([{ ...png, mimeType: 'text/plain' }])).toBe(false)
+    expect(isImageAttachments([{ ...png, mimeType: 'image' }])).toBe(false)
+  })
+
+  it('rejects malformed base64 data', () => {
+    expect(isImageAttachments([{ ...png, data: 'not base64!!' }])).toBe(false)
+    expect(isImageAttachments([{ ...png, data: '' }])).toBe(false)
+  })
+
+  it('rejects images over the byte budget', () => {
+    const big = 'A'.repeat((10 * 1024 * 1024 / 3) * 4 + 64)
+    expect(isImageAttachments([{ ...png, data: big }])).toBe(false)
+  })
+
+  it('accepts an image right at the byte budget', () => {
+    // base64 length must encode to <= 10MB decoded bytes: floor(len/4)*3
+    const over = 'A'.repeat(Math.ceil((10 * 1024 * 1024) / 3) * 4)
+    expect(isImageAttachments([{ ...png, data: over }])).toBe(false)
+    const under = 'A'.repeat(Math.ceil((10 * 1024 * 1024) / 3) * 4 - 4)
+    expect(isImageAttachments([{ ...png, data: under }])).toBe(true)
+  })
+})
+
+describe('isCustomProviderConfig', () => {
+  const valid = {
+    id: 'my-ollama',
+    name: '本地 Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    api: 'openai-completions',
+    models: [{ id: 'llama3.1:8b' }],
+  }
+
+  it('accepts a minimal valid config', () => {
+    expect(isCustomProviderConfig(valid)).toBe(true)
+  })
+
+  it('accepts full config with key, names, image input and context window', () => {
+    expect(
+      isCustomProviderConfig({
+        ...valid,
+        api: 'anthropic-messages',
+        apiKey: 'sk-test-123',
+        models: [
+          { id: 'm1', name: 'M1', input: ['text', 'image'], contextWindow: 128000 },
+          { id: 'm2' },
+        ],
+      }),
+    ).toBe(true)
+  })
+
+  it('rejects non-objects and missing fields', () => {
+    expect(isCustomProviderConfig(null)).toBe(false)
+    expect(isCustomProviderConfig(undefined)).toBe(false)
+    expect(isCustomProviderConfig('x')).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, id: undefined })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, baseUrl: undefined })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, models: undefined })).toBe(false)
+  })
+
+  it('rejects malformed provider ids', () => {
+    for (const id of ['', 'a b', '中文', '-leading', 'a'.repeat(65), 'a/b', 'a.b']) {
+      expect(isCustomProviderConfig({ ...valid, id })).toBe(false)
+    }
+  })
+
+  it('rejects non-http(s) or oversized base URLs', () => {
+    expect(isCustomProviderConfig({ ...valid, baseUrl: 'ftp://x' })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, baseUrl: 'localhost:11434' })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, baseUrl: 'x'.repeat(513) })).toBe(false)
+  })
+
+  it('rejects unsupported api values', () => {
+    expect(isCustomProviderConfig({ ...valid, api: 'magic-api' })).toBe(false)
+  })
+
+  it('rejects empty or oversized model lists and bad models', () => {
+    expect(isCustomProviderConfig({ ...valid, models: [] })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, models: Array.from({ length: 21 }, (_, i) => ({ id: `m${i}` })) })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, models: [{ id: '' }] })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, models: [{ id: 'm', input: ['video'] }] })).toBe(false)
+    expect(isCustomProviderConfig({ ...valid, models: [{ id: 'm', contextWindow: 0 }] })).toBe(false)
   })
 })

@@ -1319,6 +1319,18 @@ describe('live assistant streaming', () => {
     expect(blocks[1]).toMatchObject({ type: 'tool', id: 'call-1', name: 'bash', status: 'running' })
   })
 
+  it('surfaces thinking parts emitted with the real SDK field name (thinking, not text)', async () => {
+    const { runtime } = await initStreaming()
+    // pi-ai ThinkingContent: { type: 'thinking', thinking: string }. The old
+    // serializer read part.text and silently dropped these — regression guard.
+    priv(runtime).handleEvent(startEvent({
+      role: 'assistant', timestamp: T, stopReason: 'pending',
+      content: [{ type: 'thinking', thinking: 'real reasoning text' }],
+    }))
+    const blocks = runtime.snapshot().messages[0]!.blocks
+    expect(blocks).toEqual([{ type: 'thinking', text: 'real reasoning text' }])
+  })
+
   it('adopts the message_end snapshot with the same id, single entry, not streaming', async () => {
     const { runtime } = await initStreaming()
     priv(runtime).handleEvent(startEvent(textMsg('H')))

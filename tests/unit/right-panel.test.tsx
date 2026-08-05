@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import type { AppSnapshot } from '../../src/shared/contracts'
 import RightPanel from '../../src/renderer/src/components/RightPanel'
+import { I18nProvider } from '../../src/renderer/src/lib/i18n'
 
 const base: AppSnapshot = {
   workspace: { path: '/tmp/ws', name: 'ws' },
@@ -47,13 +48,13 @@ describe('RightPanel tool dedupe by unique instance id', () => {
         { id: 'assistant-2-3', role: 'assistant', blocks: [{ type: 'tool', id: 'call-2::2-0', name: 'bash', status: 'interrupted', input: 'ls' }] },
       ],
     }
-    const html = renderToString(<RightPanel snapshot={snapshot} />)
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={snapshot} /></I18nProvider>)
     // Four distinct occurrences of three tool names: none swallowed.
     expect(html.match(/toolcall-head/g)).toHaveLength(4)
-    expect(html).toContain('aria-label="工具 edit（失败）"')
-    expect(html).toContain('aria-label="工具 edit（成功）"')
-    expect(html).toContain('aria-label="工具 bash（运行中）"')
-    expect(html).toContain('aria-label="工具 bash（已中断）"')
+    expect(html).toContain('aria-label="edit — 失败"')
+    expect(html).toContain('aria-label="edit — 成功"')
+    expect(html).toContain('aria-label="bash — 运行中"')
+    expect(html).toContain('aria-label="bash — 已中断"')
     // The section badge counts only in-flight tools (call-2 running → 1).
     expect(html).toContain('<span class="rp-count">1</span>')
   })
@@ -71,10 +72,10 @@ describe('RightPanel tool dedupe by unique instance id', () => {
         },
       ],
     }
-    const html = renderToString(<RightPanel snapshot={snapshot} />)
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={snapshot} /></I18nProvider>)
     // Two distinct occurrences of the reused raw id: each renders its own card.
     expect(html.match(/toolcall-head/g)).toHaveLength(2)
-    expect(html.match(/aria-label="工具 edit（运行中）"/g)).toHaveLength(2)
+    expect(html.match(/aria-label="edit — 运行中"/g)).toHaveLength(2)
     // The badge counts both in-flight cards, not the raw id.
     expect(html).toContain('<span class="rp-count">2</span>')
   })
@@ -87,7 +88,7 @@ describe('RightPanel tool dedupe by unique instance id', () => {
         { id: 'tool-call-1', role: 'tool', blocks: [{ type: 'tool', id: 'call-1', name: 'edit', status: 'success', input: 'x', output: 'ok' }] },
       ],
     }
-    const html = renderToString(<RightPanel snapshot={snapshot} />)
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={snapshot} /></I18nProvider>)
     expect(html.match(/toolcall-head/g)).toHaveLength(1)
   })
 
@@ -96,7 +97,7 @@ describe('RightPanel tool dedupe by unique instance id', () => {
       ...base,
       usage: { input: 1000, output: 500, cacheRead: 200, cacheWrite: 50, cost: 0 },
     }
-    const html = renderToString(<RightPanel snapshot={snapshot} />)
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={snapshot} /></I18nProvider>)
     const stripped = html.replace(/<!-- -->/g, '')
     expect(stripped).toContain('缓存写入')
     expect(stripped).toContain('总处理')
@@ -107,7 +108,7 @@ describe('RightPanel tool dedupe by unique instance id', () => {
   })
 
   it('usage section stays empty when all counters are zero', () => {
-    const html = renderToString(<RightPanel snapshot={base} />)
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={base} /></I18nProvider>)
     expect(html).toContain('暂无活动')
     expect(html).not.toContain('总处理')
   })
