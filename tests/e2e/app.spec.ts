@@ -10,10 +10,10 @@ const SCREENSHOTS = join(PROJECT_ROOT, 'artifacts', 'screenshots')
 
 const API_METHODS = [
   'abort', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deleteSession',
-  'exportSession', 'getAppInfo', 'getSessionStats', 'getSettings', 'getSnapshot', 'logoutProvider',
-  'newSession', 'onSnapshot', 'openSession', 'openWorkspace', 'refreshModels', 'reloadSession',
-  'renameSession', 'sendPrompt', 'setModel', 'setRuntimeApiKey', 'setThinking', 'setToolApprovalMode',
-  'updateSettings', 'quitApp',
+  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getExtensions', 'getSessionStats', 'getSettings',
+  'getSnapshot', 'logoutProvider', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
+  'refreshModels', 'reloadSession', 'renameSession', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
+  'setThinking', 'setToolApprovalMode', 'testProviderConnection', 'updateSettings', 'quitApp',
 ].sort()
 
 test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {

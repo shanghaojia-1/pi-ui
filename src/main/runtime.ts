@@ -14,8 +14,8 @@ import {
   type InlineExtension,
 } from '@earendil-works/pi-coding-agent'
 import type {
-  AppError, AppSnapshot, ChatMessage, CompactionConfig, CustomProviderConfig, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
-  ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
+  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
+  ProviderConnectionTest, ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
 import { isPlainObject, sanitizeErrorText } from '../shared/contracts'
@@ -468,7 +468,10 @@ export class PiRuntime {
     if (!this.workspace || !this.modelRuntime) return null
     const loader = new DefaultResourceLoader({
       cwd: this.workspace.path, agentDir: getAgentDir(), extensionFactories: [this.approvalExtension()],
-      noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true,
+      // User extensions / skills / prompt templates are loaded (they power
+      // the dynamic slash-command menu); themes stay disabled because the
+      // GUI ships its own theme system.
+      noExtensions: false, noSkills: false, noPromptTemplates: false, noThemes: true,
     })
     await loader.reload()
     if (myEpoch !== this.epoch) return null
@@ -1079,6 +1082,117 @@ export class PiRuntime {
         await session.reload()
       } catch (error) { this.recordError('Reload failed', error) }
     }).then(() => this.snapshot())
+  }
+
+  /**
+   * Slash commands contributed by loaded extensions, prompt templates and
+   * skills (the built-in GUI commands live in the renderer). The SDK exposes
+   * extension commands, templates and skills through the session's resource
+   * loader; each entry maps 1:1 to what `prompt('/name …')` would execute.
+   */
+  getDynamicCommands(): Promise<DynamicCommand[]> {
+    const session = this.session
+    if (!session) return Promise.resolve([])
+    const out: DynamicCommand[] = []
+    try {
+      const result = session.resourceLoader.getExtensions()
+      for (const extension of result.extensions) {
+        for (const [name, command] of extension.commands) {
+          if (typeof name !== 'string' || name === '') continue
+          out.push({
+            name,
+            source: 'extension',
+            ...(typeof command.description === 'string' ? { description: command.description } : {}),
+          })
+        }
+      }
+    } catch { /* loader errors are surfaced in the settings extensions section */ }
+    for (const template of session.promptTemplates) {
+      if (template.name === '') continue
+      out.push({
+        name: template.name,
+        source: 'prompt',
+        ...(template.description ? { description: template.description } : {}),
+        ...(template.argumentHint ? { argHint: template.argumentHint } : {}),
+      })
+    }
+    try {
+      const skills = session.resourceLoader.getSkills().skills
+      for (const skill of skills) {
+        if (skill.name === '') continue
+        out.push({
+          name: `skill:${skill.name}`,
+          source: 'skill',
+          ...(skill.description ? { description: skill.description } : {}),
+        })
+      }
+    } catch { /* skills unavailable */ }
+    return Promise.resolve(out)
+  }
+
+  /**
+   * Provider connection test for the New-provider form: hits the
+   * OpenAI/Anthropic/Google-compatible `…/models` endpoint with the typed
+   * API key. Distinguishes auth failures (401/403) from plain HTTP errors
+   * and network unreachability; never echoes the key back.
+   */
+  async testProviderConnection(config: ProviderConnectionTest): Promise<ConnectionTestResult> {
+    try {
+      const base = config.baseUrl.trim().replace(/\/+$/, '')
+      let url: URL
+      try {
+        url = new URL(`${base}/models`)
+      } catch {
+        return { ok: false, status: null, kind: 'network' }
+      }
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return { ok: false, status: null, kind: 'network' }
+      }
+      const headers: Record<string, string> = {}
+      const key = config.apiKey?.trim()
+      if (config.api === 'anthropic-messages') {
+        if (key) headers['x-api-key'] = key
+        headers['anthropic-version'] = '2023-06-01'
+      } else if (config.api === 'google-generative-ai') {
+        if (key) url.searchParams.set('key', key)
+      } else if (key) {
+        headers.Authorization = `Bearer ${key}`
+      }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8000)
+      try {
+        const response = await fetch(url, { headers, signal: controller.signal })
+        if (response.ok) return { ok: true, status: response.status, kind: 'ok' }
+        if (response.status === 401 || response.status === 403) return { ok: false, status: response.status, kind: 'auth' }
+        return { ok: false, status: response.status, kind: 'http' }
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch {
+      return { ok: false, status: null, kind: 'network' }
+    }
+  }
+
+  /** Loaded-extension inventory for the Settings extensions section. */
+  getExtensions(): Promise<ExtensionsInfo> {
+    const session = this.session
+    if (!session) return Promise.resolve({ extensions: [], errors: [] })
+    try {
+      const result = session.resourceLoader.getExtensions()
+      return Promise.resolve({
+        extensions: result.extensions.map((extension) => ({
+          path: extension.path,
+          resolvedPath: extension.resolvedPath,
+          sourceLabel: extension.sourceInfo.source || extension.path,
+          commandCount: extension.commands.size,
+          toolCount: extension.tools.size,
+          handlerCount: [...extension.handlers.values()].reduce((n, handlers) => n + handlers.length, 0),
+        })),
+        errors: result.errors.map((e) => ({ path: e.path, error: e.error })),
+      })
+    } catch {
+      return Promise.resolve({ extensions: [], errors: [] })
+    }
   }
 
   /** Registers a submitted runtime API key as a redaction target (memory only). */

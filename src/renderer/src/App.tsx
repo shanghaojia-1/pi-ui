@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { FolderOpen, LoaderCircle, TriangleAlert, X } from 'lucide-react'
-import type { AppInfo, AppSnapshot, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
+import type { AppInfo, AppSnapshot, DynamicCommand, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
 import { errorMessage, useMediaQuery, useSnapshot } from './hooks'
 import { formatCost, formatTokens } from './lib/format'
 import { useI18n } from './lib/i18n'
@@ -30,6 +30,8 @@ export default function App() {
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null)
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
+  /** Extension / template / skill slash commands; refreshed on session changes. */
+  const [extraCommands, setExtraCommands] = useState<DynamicCommand[]>([])
   const composerRef = useRef<ComposerHandle>(null)
   const snapRef = useRef<AppSnapshot | null>(snapshot)
   snapRef.current = snapshot
@@ -93,6 +95,15 @@ export default function App() {
     setSettingsOpen(true)
   }, [])
 
+  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
+    setToast(null)
+    setPendingText(text)
+    window.pi.sendPrompt(text, images).catch((e: unknown) => {
+      setPendingText(null)
+      setToast(errorMessage(e))
+    })
+  }, [])
+
   /** Slash-command dispatch from the composer's `/` menu. */
   const handleCommand = useCallback(
     (commandId: string, arg: string) => {
@@ -151,20 +162,17 @@ export default function App() {
           void window.pi.quitApp()
           return
         default:
-          setToast(t('app.command.unknown', { cmd: commandId }))
+          // Extension / prompt-template / skill command: hand the raw text to
+          // the SDK, which resolves and executes it like the TUI does.
+          if (arg === '') {
+            setToast(t('app.command.unknown', { cmd: commandId }))
+            return
+          }
+          handleSend(`/${commandId} ${arg}`)
       }
     },
-    [handleNewSession, openSettings, t],
+    [handleNewSession, openSettings, handleSend, t],
   )
-
-  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
-    setToast(null)
-    setPendingText(text)
-    window.pi.sendPrompt(text, images).catch((e: unknown) => {
-      setPendingText(null)
-      setToast(errorMessage(e))
-    })
-  }, [])
 
   const handleStop = useCallback(() => {
     void window.pi.abort()
@@ -235,6 +243,11 @@ export default function App() {
   useEffect(() => {
     window.pi.getAppInfo().then(setAppInfo, () => undefined)
   }, [])
+
+  // Refresh dynamic slash commands whenever the active session changes.
+  useEffect(() => {
+    window.pi.getDynamicCommands().then(setExtraCommands, () => setExtraCommands([]))
+  }, [snapshot?.activeSessionPath, snapshot?.workspace?.path])
 
   if (snapshot === null) {
     return (
@@ -366,6 +379,7 @@ export default function App() {
                 onSend={handleSend}
                 onStop={handleStop}
                 onCommand={handleCommand}
+                extraCommands={extraCommands}
               />
             </>
           )}

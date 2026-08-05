@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { ArrowUp, ImagePlus, Square, X } from 'lucide-react'
-import { MAX_ATTACHED_IMAGE_BYTES, MAX_ATTACHED_IMAGES, type ImageAttachment } from '@shared/contracts'
+import { MAX_ATTACHED_IMAGE_BYTES, MAX_ATTACHED_IMAGES, type DynamicCommand, type ImageAttachment } from '@shared/contracts'
 import ImageLightbox from './Lightbox'
 import { useI18n } from '../lib/i18n'
 
@@ -16,6 +16,8 @@ interface ComposerProps {
   onStop: () => void
   /** Slash-command dispatch; App maps ids to app actions / IPC. */
   onCommand: (commandId: string, arg: string) => void
+  /** Commands contributed by extensions / prompt templates / skills. */
+  extraCommands?: DynamicCommand[]
 }
 
 interface SlashCommand {
@@ -64,8 +66,14 @@ function fileToAttachment(file: File, fail: (key: string, vars?: Record<string, 
   })
 }
 
+const GROUP_KEY_BY_SOURCE: Record<DynamicCommand['source'], string> = {
+  extension: 'composer.slash.groupExtension',
+  prompt: 'composer.slash.groupPrompt',
+  skill: 'composer.slash.groupSkill',
+}
+
 const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { disabled, placeholder, running, onSend, onStop, onCommand },
+  { disabled, placeholder, running, onSend, onStop, onCommand, extraCommands },
   ref,
 ) {
   const { t } = useI18n()
@@ -173,9 +181,17 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   const matches = useMemo(() => {
     if (slash === null) return []
     const q = slashQuery.trim().toLowerCase()
-    const list = q === '' ? SLASH_COMMANDS : SLASH_COMMANDS.filter((c) => c.name.startsWith(q) || c.name.includes(q))
-    return list
-  }, [slash, slashQuery])
+    // Built-in GUI commands + extension/template/skill commands.
+    const dynamic: SlashCommand[] = (extraCommands ?? []).map((cmd) => ({
+      id: `dynamic:${cmd.name}`,
+      name: cmd.name,
+      descriptionKey: `__dynamic__:${cmd.description ?? ''}`,
+      groupKey: GROUP_KEY_BY_SOURCE[cmd.source],
+      ...(cmd.argHint !== undefined ? { argHint: cmd.argHint } : {}),
+    }))
+    const list = [...SLASH_COMMANDS, ...dynamic]
+    return q === '' ? list : list.filter((c) => c.name.startsWith(q) || c.name.includes(q))
+  }, [slash, slashQuery, extraCommands])
 
   // Keep the selection index valid when the filtered list shrinks.
   useEffect(() => {
@@ -214,7 +230,10 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
   const runCommand = (cmd: SlashCommand, arg: string): void => {
     setText('')
     setMenuIndex(0)
-    onCommand(cmd.id, arg)
+    // Dynamic commands carry their description in descriptionKey; translate
+    // the text part before dispatch (id is dynamic:NAME).
+    const id = cmd.id.startsWith('dynamic:') ? cmd.id.slice('dynamic:'.length) : cmd.id
+    onCommand(id, arg)
     textareaRef.current?.focus()
   }
 
@@ -397,7 +416,11 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
             >
               <span className="slash-name">/{cmd.name}</span>
               {cmd.argHint !== undefined ? <span className="slash-arg">{cmd.argHint}</span> : null}
-              <span className="slash-desc">{t(cmd.descriptionKey)}</span>
+              <span className="slash-desc">
+                {cmd.descriptionKey.startsWith('__dynamic__:')
+                  ? cmd.descriptionKey.slice('__dynamic__:'.length)
+                  : t(cmd.descriptionKey)}
+              </span>
               <span className="slash-group">{t(cmd.groupKey)}</span>
             </button>
           ))}

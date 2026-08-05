@@ -3,6 +3,7 @@ import { LoaderCircle, LogOut, Plus, RefreshCw, RotateCcw, Search, TriangleAlert
 import type {
   AppSnapshot,
   CustomProviderApi,
+  ExtensionsInfo,
   ProviderStatus,
   SettingsPatch,
   SettingsSnapshot,
@@ -83,6 +84,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [providerQuery, setProviderQuery] = useState('')
+  const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
   // Custom-provider form (adds a provider to the agent's models.json).
   const [customOpen, setCustomOpen] = useState(false)
   const [customId, setCustomId] = useState('')
@@ -90,8 +92,13 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [customBaseUrl, setCustomBaseUrl] = useState('')
   const [customApi, setCustomApi] = useState<CustomProviderApi>('openai-completions')
   const [customApiKey, setCustomApiKey] = useState('')
-  const [customModels, setCustomModels] = useState('')
+  /** Models of the new provider, added one by one. */
+  const [customModels, setCustomModels] = useState<{ id: string; name?: string }[]>([])
+  const [modelInput, setModelInput] = useState('')
+  const [modelNameInput, setModelNameInput] = useState('')
   const [customImage, setCustomImage] = useState(false)
+  /** Connection-test state for the New-provider modal. */
+  const [testResult, setTestResult] = useState<{ testing: boolean } | { testing: false; ok: boolean; status: number | null; kind: 'ok' | 'auth' | 'http' | 'network' }>({ testing: false })
 
   const sheetRef = useRef<HTMLElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -135,6 +142,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       restoreFocusRef.current?.focus()
     }
   }, [load])
+
+  // Loaded-extension inventory for the Extensions section.
+  useEffect(() => {
+    window.pi.getExtensions().then(setExtensionsInfo, () => setExtensionsInfo(null))
+  }, [])
 
   // When opened from the TopBar approval badge: land on the danger partition
   // (scroll it into view) and put focus on its switch.
@@ -246,22 +258,77 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     }
   }
 
-  /** Parses the models textarea (one `id` or `id|显示名` per line). */  const parseCustomModels = (): { id: string; name?: string }[] => {
-    const out: { id: string; name?: string }[] = []
-    for (const line of customModels.split(/[\n,]/)) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      const [mid, mname] = trimmed.split(/[|:]/, 2).map((s) => s.trim())
-      if (mid !== undefined && mid !== '') out.push({ id: mid, ...(mname !== undefined && mname !== '' ? { name: mname } : {}) })
+  /**
+   * Provider type presets for the New-provider modal: picking one fills the
+   * API flavor and (when untouched) a common base URL.
+   */
+  const PROVIDER_TYPES: { id: string; labelKey: string; api: CustomProviderApi; url?: string }[] = [
+    { id: 'ollama', labelKey: 'settings.type.ollama', api: 'openai-completions', url: 'http://localhost:11434/v1' },
+    { id: 'openai', labelKey: 'settings.type.openai', api: 'openai-completions' },
+    { id: 'anthropic', labelKey: 'settings.type.anthropic', api: 'anthropic-messages', url: 'https://api.anthropic.com/v1' },
+    { id: 'google', labelKey: 'settings.type.google', api: 'google-generative-ai', url: 'https://generativelanguage.googleapis.com/v1beta' },
+    { id: 'custom', labelKey: 'settings.type.custom', api: 'openai-completions' },
+  ]
+  const [customType, setCustomType] = useState('custom')
+
+  const selectProviderType = (typeId: string): void => {
+    setCustomType(typeId)
+    const preset = PROVIDER_TYPES.find((p) => p.id === typeId)
+    if (!preset) return
+    setCustomApi(preset.api)
+    // Only pre-fill the URL while the user has not typed one.
+    if (preset.url !== undefined && customBaseUrl.trim() === '') setCustomBaseUrl(preset.url)
+  }
+
+  const addModel = (): void => {
+    const id = modelInput.trim()
+    if (id === '') {
+      setLive({ kind: 'error', text: t('settings.modelIdRequired') })
+      return
     }
-    return out
+    if (customModels.some((m) => m.id === id)) {
+      setLive({ kind: 'error', text: t('settings.duplicateModel') })
+      return
+    }
+    const name = modelNameInput.trim()
+    setCustomModels((prev) => [...prev, { id, ...(name !== '' ? { name } : {}) }])
+    setModelInput('')
+    setModelNameInput('')
+    setLive(null)
+  }
+
+  /** Tests the typed base URL + API key against the provider's /models endpoint. */
+  const testConnection = async (): Promise<void> => {
+    if (anyBusy) return
+    const baseUrl = customBaseUrl.trim()
+    if (baseUrl === '') {
+      setLive({ kind: 'error', text: t('settings.customUrlInvalid') })
+      return
+    }
+    setTestResult({ testing: true })
+    try {
+      const result = await window.pi.testProviderConnection({
+        baseUrl,
+        api: customApi,
+        ...(customApiKey.trim() !== '' ? { apiKey: customApiKey.trim() } : {}),
+      })
+      setTestResult({ testing: false, ok: result.ok, status: result.status, kind: result.kind })
+    } catch {
+      setTestResult({ testing: false, ok: false, status: null, kind: 'network' })
+    }
+  }
+
+  const closeCustomModal = (): void => {
+    setCustomOpen(false)
+    setTestResult({ testing: false })
+    setLive(null)
   }
 
   const saveCustom = async (): Promise<void> => {
     if (anyBusy) return
     const id = customId.trim()
     const baseUrl = customBaseUrl.trim()
-    const models = parseCustomModels()
+    const models = customModels
     if (id === '' || baseUrl === '' || models.length === 0) {
       setLive({ kind: 'error', text: t('settings.customValidation') })
       return
@@ -296,8 +363,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         setCustomName('')
         setCustomBaseUrl('')
         setCustomApiKey('')
-        setCustomModels('')
+        setCustomModels([])
+        setModelInput('')
+        setModelNameInput('')
         setCustomImage(false)
+        setTestResult({ testing: false })
         // Select the new provider so its panel is ready for a runtime key.
         setSelectedProvider((prev) => prev ?? id)
       }
@@ -567,16 +637,15 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   <h3 id="sett-providers-title">{t('settings.providers')}</h3>
                   <button
                     type="button"
-                    className="btn btn-ghost"
+                    className="btn btn-primary"
                     disabled={anyBusy}
                     onClick={() => {
-                      setCustomOpen((v) => !v)
+                      setCustomOpen(true)
                       setLive(null)
                     }}
-                    aria-expanded={customOpen}
                   >
                     <Plus size={13} aria-hidden="true" />
-                    {customOpen ? t('settings.collapseForm') : t('settings.addCustom')}
+                    {t('settings.newProvider')}
                   </button>
                 </div>
                 <p className="sett-hint">{t('settings.providersHint')}</p>
@@ -617,121 +686,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     )}
                   </>
                 )}
-
-                {/* Custom provider form: writes a provider into the agent's
-                    models.json (local model servers, proxies, custom endpoints). */}
-                {customOpen ? (
-                  <div className="sett-custom">
-                    <h4 className="sett-custom-title">{t('settings.customTitle')}</h4>
-                    <p className="sett-hint">{t('settings.customHint')}</p>
-                    <div className="sett-custom-grid">
-                      <div className="sett-field">
-                        <label htmlFor="custom-id">{t('settings.customId')}</label>
-                        <input
-                          id="custom-id"
-                          className="sett-input"
-                          placeholder={t('settings.customIdPh')}
-                          value={customId}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomId(e.target.value)}
-                        />
-                      </div>
-                      <div className="sett-field">
-                        <label htmlFor="custom-name">{t('settings.customName')}</label>
-                        <input
-                          id="custom-name"
-                          className="sett-input"
-                          placeholder={t('settings.customNamePh')}
-                          value={customName}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomName(e.target.value)}
-                        />
-                      </div>
-                      <div className="sett-field">
-                        <label htmlFor="custom-url">{t('settings.customUrl')}</label>
-                        <input
-                          id="custom-url"
-                          className="sett-input"
-                          placeholder={t('settings.customUrlPh')}
-                          value={customBaseUrl}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomBaseUrl(e.target.value)}
-                        />
-                      </div>
-                      <div className="sett-field">
-                        <label htmlFor="custom-api">{t('settings.customApi')}</label>
-                        <select
-                          id="custom-api"
-                          className="sett-select"
-                          value={customApi}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomApi(e.target.value as CustomProviderApi)}
-                        >
-                          {CUSTOM_PROVIDER_APIS.map((a) => (
-                            <option key={a} value={a}>
-                              {a}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="sett-field">
-                        <label htmlFor="custom-key">{t('settings.customKey')}</label>
-                        <input
-                          id="custom-key"
-                          type="password"
-                          className="sett-input"
-                          autoComplete="new-password"
-                          placeholder={t('settings.customKeyPh')}
-                          value={customApiKey}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomApiKey(e.target.value)}
-                        />
-                      </div>
-                      <div className="sett-field">
-                        <label htmlFor="custom-models">{t('settings.customModels')}</label>
-                        <textarea
-                          id="custom-models"
-                          className="sett-input sett-textarea"
-                          rows={3}
-                          placeholder={'llama3.1:8b\nqwen2.5-coder:7b|Qwen 2.5 Coder'}
-                          value={customModels}
-                          disabled={anyBusy}
-                          onChange={(e) => setCustomModels(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <label className="sett-toggle">
-                      <input
-                        type="checkbox"
-                        checked={customImage}
-                        disabled={anyBusy}
-                        onChange={(e) => setCustomImage(e.target.checked)}
-                      />
-                      {t('settings.customImage')}
-                    </label>
-                    <div className="sett-custom-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        disabled={anyBusy}
-                        onClick={() => void saveCustom()}
-                      >
-                        {busy === 'custom' ? t('settings.addingProvider') : t('settings.addProvider')}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={anyBusy}
-                        onClick={() => {
-                          setCustomOpen(false)
-                          setLive(null)
-                        }}
-                      >
-                        {t('common.cancel')}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
 
                 {/* Provider action panel: sits right under the list so the
                     choose-then-configure flow reads top-to-bottom. */}
@@ -788,6 +742,65 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     </>
                   )}
                 </div>
+              </section>
+
+              <section className="sett-section" aria-labelledby="sett-extensions-title">
+                <div className="sett-section-head">
+                  <h3 id="sett-extensions-title">{t('settings.extensions')}</h3>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={anyBusy}
+                    onClick={() => {
+                      setBusy('refresh')
+                      window.pi
+                        .reloadSession()
+                        .then(async () => {
+                          const info = await window.pi.getExtensions()
+                          setExtensionsInfo(info)
+                          setLive({ kind: 'success', text: t('settings.modelsRefreshed') })
+                        })
+                        .catch((e: unknown) => setLive({ kind: 'error', text: errorMessage(e) }))
+                        .finally(() => setBusy(null))
+                    }}
+                  >
+                    <RefreshCw size={13} aria-hidden="true" />
+                    {busy === 'refresh' ? t('settings.refreshing') : t('settings.reloadExtensions')}
+                  </button>
+                </div>
+                <p className="sett-hint">{t('settings.extensionsHint')}</p>
+                {extensionsInfo === null ? (
+                  <div className="sett-state sett-state-inline">
+                    <LoaderCircle size={16} className="sett-spin" aria-hidden="true" />
+                  </div>
+                ) : extensionsInfo.extensions.length === 0 && extensionsInfo.errors.length === 0 ? (
+                  <p className="sett-hint">{t('settings.noExtensions')}</p>
+                ) : (
+                  <div className="sett-extension-list">
+                    {extensionsInfo.extensions.map((extension) => (
+                      <div className="sett-extension" key={extension.resolvedPath}>
+                        <span className="sett-extension-path" title={extension.path}>
+                          {extension.path}
+                        </span>
+                        <span className="sett-extension-meta">
+                          <span>{t('settings.extensionsCommands', { n: extension.commandCount })}</span>
+                          <span>{t('settings.extensionsTools', { n: extension.toolCount })}</span>
+                          <span>{t('settings.extensionsHandlers', { n: extension.handlerCount })}</span>
+                        </span>
+                      </div>
+                    ))}
+                    {extensionsInfo.errors.length > 0 ? (
+                      <div className="sett-extension-errors">
+                        <p>{t('settings.extensionsErrors')}</p>
+                        {extensionsInfo.errors.map((error) => (
+                          <div key={error.path} className="sett-extension-error">
+                            <code>{error.path}</code>: {error.error}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
               </section>
 
               <section className="sett-section" aria-labelledby="sett-defaults-title">
@@ -970,6 +983,212 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
           )}
         </div>
       </section>
+
+      {/* New-provider modal: a real dialog instead of an inline block. */}
+      {customOpen ? (
+        <div
+          className="stats-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('settings.customTitle')}
+          onClick={closeCustomModal}
+        >
+          <div className="stats-box sett-custom-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="stats-head">
+              <h3>{t('settings.customTitle')}</h3>
+              <button type="button" className="btn-icon" onClick={closeCustomModal} aria-label={t('common.close')}>
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <p className="sett-hint">{t('settings.customHint')}</p>
+            {/* Provider type presets: pre-fill API flavor + common URL. */}
+            <div className="sett-field">
+              <label>{t('settings.providerType')}</label>
+              <div className="sett-type-row" role="radiogroup" aria-label={t('settings.providerType')}>
+                {PROVIDER_TYPES.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={customType === preset.id}
+                    className={`sett-type${customType === preset.id ? ' sett-type-active' : ''}`}
+                    onClick={() => selectProviderType(preset.id)}
+                  >
+                    {t(preset.labelKey)}
+                  </button>
+                ))}
+              </div>
+              <span className="sett-field-hint">{t('settings.providerTypeHint')}</span>
+            </div>
+            <div className="sett-custom-grid">
+              <div className="sett-field">
+                <label htmlFor="custom-id">{t('settings.customId')}</label>
+                <input
+                  id="custom-id"
+                  className="sett-input"
+                  placeholder={t('settings.customIdPh')}
+                  value={customId}
+                  disabled={anyBusy}
+                  onChange={(e) => setCustomId(e.target.value)}
+                />
+              </div>
+              <div className="sett-field">
+                <label htmlFor="custom-name">{t('settings.customName')}</label>
+                <input
+                  id="custom-name"
+                  className="sett-input"
+                  placeholder={t('settings.customNamePh')}
+                  value={customName}
+                  disabled={anyBusy}
+                  onChange={(e) => setCustomName(e.target.value)}
+                />
+              </div>
+              <div className="sett-field">
+                <label htmlFor="custom-url">{t('settings.customUrl')}</label>
+                <input
+                  id="custom-url"
+                  className="sett-input"
+                  placeholder={t('settings.customUrlPh')}
+                  value={customBaseUrl}
+                  disabled={anyBusy}
+                  onChange={(e) => setCustomBaseUrl(e.target.value)}
+                />
+              </div>
+              <div className="sett-field">
+                <label htmlFor="custom-api">{t('settings.customApi')}</label>
+                <select
+                  id="custom-api"
+                  className="sett-select"
+                  value={customApi}
+                  disabled={anyBusy}
+                  onChange={(e) => setCustomApi(e.target.value as CustomProviderApi)}
+                >
+                  {CUSTOM_PROVIDER_APIS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sett-field">
+                <label htmlFor="custom-key">{t('settings.customKey')}</label>
+                <input
+                  id="custom-key"
+                  type="password"
+                  className="sett-input"
+                  autoComplete="new-password"
+                  placeholder={t('settings.customKeyPh')}
+                  value={customApiKey}
+                  disabled={anyBusy}
+                  onChange={(e) => setCustomApiKey(e.target.value)}
+                />
+              </div>
+              <div className="sett-field">
+                <label>{t('settings.modelsList')}</label>
+                <span className="sett-field-hint">{t('settings.modelsListHint')}</span>
+                {customModels.length > 0 ? (
+                  <div className="sett-model-list">
+                    {customModels.map((model) => (
+                      <div className="sett-model-row" key={model.id}>
+                        <span className="sett-model-id">{model.id}</span>
+                        {model.name !== undefined ? <span className="sett-model-name">{model.name}</span> : null}
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          aria-label={t('settings.removeModel')}
+                          title={t('settings.removeModel')}
+                          onClick={() => setCustomModels((prev) => prev.filter((m) => m.id !== model.id))}
+                        >
+                          <X size={12} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="sett-model-add">
+                  <input
+                    className="sett-input"
+                    placeholder={t('settings.modelIdPh')}
+                    aria-label={t('settings.modelIdAria')}
+                    value={modelInput}
+                    disabled={anyBusy}
+                    onChange={(e) => setModelInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addModel()
+                      }
+                    }}
+                  />
+                  <input
+                    className="sett-input"
+                    placeholder={t('settings.modelNamePh')}
+                    aria-label={t('settings.modelNamePh')}
+                    value={modelNameInput}
+                    disabled={anyBusy}
+                    onChange={(e) => setModelNameInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addModel()
+                      }
+                    }}
+                  />
+                  <button type="button" className="btn" disabled={anyBusy} onClick={addModel}>
+                    <Plus size={13} aria-hidden="true" />
+                    {t('settings.addModel')}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <label className="sett-toggle">
+              <input
+                type="checkbox"
+                checked={customImage}
+                disabled={anyBusy}
+                onChange={(e) => setCustomImage(e.target.checked)}
+              />
+              {t('settings.customImage')}
+            </label>
+            <div className="sett-custom-actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={anyBusy}
+                onClick={() => void testConnection()}
+              >
+                {testResult.testing ? t('settings.testingConnection') : t('settings.testConnection')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={anyBusy}
+                onClick={() => void saveCustom()}
+              >
+                {busy === 'custom' ? t('settings.addingProvider') : t('settings.addProvider')}
+              </button>
+              <button type="button" className="btn" disabled={anyBusy} onClick={closeCustomModal}>
+                {t('common.cancel')}
+              </button>
+            </div>
+            {!testResult.testing && 'kind' in testResult ? (
+              <div
+                className={`sett-test-result sett-test-${testResult.ok ? 'ok' : 'fail'}`}
+                role="status"
+                aria-live="polite"
+              >
+                {testResult.ok
+                  ? t('settings.testOk')
+                  : testResult.kind === 'auth'
+                    ? t('settings.testAuth', { status: String(testResult.status ?? '') })
+                    : testResult.kind === 'http'
+                      ? t('settings.testHttp', { status: String(testResult.status ?? '') })
+                      : t('settings.testNetwork')}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

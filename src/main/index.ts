@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isImageAttachments, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isImageAttachments, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
 import { ManagedModeStore } from './managed-mode'
 import { PiRuntime } from './runtime'
@@ -117,6 +117,12 @@ ipcMain.handle(IPC.appInfo, (): AppInfo => ({
   platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux' ? process.platform : 'other',
   agentDir: getAgentDir(),
 }))
+ipcMain.handle(IPC.dynamicCommands, () => runtime.getDynamicCommands())
+ipcMain.handle(IPC.extensions, () => runtime.getExtensions())
+ipcMain.handle(IPC.testConnection, (_event, config: unknown) => {
+  if (!isProviderConnectionTest(config)) throw new Error('Invalid connection test')
+  return runtime.testProviderConnection(config)
+})
 ipcMain.handle(IPC.prompt, (_event, text: unknown, images: unknown) => {
   // images is optional: undefined (plain text) is always valid; anything else
   // must pass the full attachment validation.

@@ -2393,6 +2393,150 @@ li[aria-selected='true'] > .select-item {
   gap: 6px;
   margin-top: 4px;
 }
+/* Connection test feedback in the New-provider modal. */
+.sett-custom-modal {
+  width: min(520px, 92vw);
+}
+.sett-test-result {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.sett-test-ok {
+  background: var(--green-soft);
+  border: 1px solid var(--green);
+  color: var(--green);
+}
+.sett-test-fail {
+  background: var(--red-soft);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+/* Provider type presets in the New-provider modal. */
+.sett-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.sett-type {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.sett-type:hover {
+  border-color: var(--border-strong);
+}
+.sett-type-active,
+.sett-type-active:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+/* One-by-one model list in the New-provider modal. */
+.sett-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.sett-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  font-size: 12px;
+}
+.sett-model-id {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.sett-model-name {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sett-model-row .btn-icon {
+  margin-left: auto;
+  flex: none;
+}
+.sett-model-add {
+  display: flex;
+  gap: 6px;
+}
+.sett-model-add .sett-input:first-child {
+  flex: 2;
+}
+.sett-model-add .sett-input:nth-child(2) {
+  flex: 1;
+}
+/* Extensions section */
+.sett-state-inline {
+  padding: 6px 2px;
+}
+.sett-extension-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sett-extension {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+.sett-extension-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sett-extension-meta {
+  display: flex;
+  gap: 8px;
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.sett-extension-errors {
+  padding: 8px 10px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  background: var(--red-soft);
+  font-size: 11.5px;
+  color: var(--red);
+}
+.sett-extension-errors p {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.sett-extension-error {
+  font-size: 11px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.sett-extension-error code {
+  font-family: var(--font-mono);
+}
 .sett-hint {
   margin: 0 0 8px;
   font-size: 11.5px;

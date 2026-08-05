@@ -65,6 +65,17 @@ const CUSTOM_MODEL_ID_MAX = 256
  * bounded; the payload is written verbatim to models.json, so any
  * out-of-schema field is rejected here before it can reach disk.
  */
+/** Whitelist validation for testProviderConnection (no secrets echoed). */
+export function isProviderConnectionTest(value: unknown): value is ProviderConnectionTest {
+  if (!isPlainObject(value)) return false
+  const { baseUrl, api, apiKey } = value as Record<string, unknown>
+  if (typeof baseUrl !== 'string' || baseUrl.length < 1 || baseUrl.length > 512) return false
+  if (!/^https?:\/\//i.test(baseUrl.trim())) return false
+  if (!CUSTOM_PROVIDER_APIS.includes(api as CustomProviderApi)) return false
+  if (apiKey !== undefined && (typeof apiKey !== 'string' || apiKey.length > 4096)) return false
+  return true
+}
+
 export function isCustomProviderConfig(value: unknown): value is CustomProviderConfig {
   if (!isPlainObject(value)) return false
   const { id, name, baseUrl, api, apiKey, models } = value as Record<string, unknown>
@@ -181,6 +192,42 @@ export interface AppInfo {
   agentDir: string
 }
 
+/** A slash command the composer can offer, beyond the built-in GUI set. */
+export interface DynamicCommand {
+  name: string
+  description?: string
+  argHint?: string
+  source: 'extension' | 'prompt' | 'skill'
+}
+
+/** One loaded extension, as surfaced to the Settings extensions section. */
+export interface ExtensionInfo {
+  path: string
+  resolvedPath: string
+  sourceLabel: string
+  commandCount: number
+  toolCount: number
+  handlerCount: number
+}
+
+export interface ExtensionsInfo {
+  extensions: ExtensionInfo[]
+  errors: { path: string; error: string }[]
+}
+
+/** Payload for the provider connection test (Settings → New provider). */
+export interface ProviderConnectionTest {
+  baseUrl: string
+  api: CustomProviderApi
+  apiKey?: string
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  status: number | null
+  kind: 'ok' | 'auth' | 'http' | 'network'
+}
+
 export interface TelemetryInfo {
   tokenRate: number | null
   tokenRateKind: 'live-estimate' | 'final' | 'unavailable'
@@ -227,6 +274,9 @@ export interface PiDesktopApi {
   reloadSession(): Promise<AppSnapshot>
   quitApp(): Promise<void>
   getAppInfo(): Promise<AppInfo>
+  getDynamicCommands(): Promise<DynamicCommand[]>
+  getExtensions(): Promise<ExtensionsInfo>
+  testProviderConnection(config: ProviderConnectionTest): Promise<ConnectionTestResult>
   sendPrompt(text: string, images?: ImageAttachment[]): Promise<void>
   abort(): Promise<void>
   setModel(provider: string, id: string): Promise<AppSnapshot>
@@ -248,6 +298,7 @@ export const IPC = {
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
+  dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   changed: 'pi:changed',
 } as const
