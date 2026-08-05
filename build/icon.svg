@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6F0E6"/>
+      <stop offset="0.55" stop-color="#EDE4D3"/>
+      <stop offset="1" stop-color="#E0D4BE"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#3D342A" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- Warm neutral square base -->
+  <rect x="32" y="32" width="960" height="960" rx="216" fill="url(#bg)"/>
+
+  <!-- Abstract P / terminal prompt glyph -->
+  <g filter="url(#shadow)">
+    <!-- Stem -->
+    <rect x="280" y="300" width="130" height="424" rx="65" fill="#44392E"/>
+    <!-- Top bar -->
+    <rect x="280" y="300" width="330" height="130" rx="65" fill="#44392E"/>
+    <!-- Prompt chevron bowl: an angular P bowl that reads as a terminal prompt -->
+    <path d="M 402 462 L 590 512 L 402 562" fill="none" stroke="#44392E" stroke-width="108" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Terminal cursor block -->
+    <rect x="646" y="458" width="104" height="108" rx="28" fill="#7A6A58"/>
+  </g>
+</svg>
