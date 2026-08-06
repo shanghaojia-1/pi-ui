@@ -1,6 +1,7 @@
+import { useMemo } from 'react'
 import type { AppSnapshot, RunState, ThinkingLevel } from '@shared/contracts'
 import { LoaderCircle, PanelLeft, PanelRight, Shield, ShieldAlert, TriangleAlert } from 'lucide-react'
-import Select, { type SelectOption } from './Select'
+import Select, { type SelectGroup, type SelectOption } from './Select'
 import { formatTokens } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 
@@ -52,13 +53,26 @@ export default function TopBar({
   const models = snapshot?.models ?? []
   const activeModel = snapshot?.activeModel ?? null
   const thinkingOptions: SelectOption[] = Object.entries(THINKING_KEYS).map(([value, key]) => ({ value, label: t(key) }))
-  const modelOptions: SelectOption[] = models.map((m) => ({
-    value: `${m.provider}:${m.id}`,
-    label: m.name,
-    hint: m.contextWindow !== undefined ? `${m.provider} · ${formatTokens(m.contextWindow)}` : m.provider,
-  }))
+  // Model picker grouped by provider (hint = context window only; the provider
+  // is the group header, mirroring the settings provider cards).
+  const modelGroups: SelectGroup[] = useMemo(() => {
+    const byProvider = new Map<string, { id: string; name: string; contextWindow?: number }[]>()
+    for (const m of models) {
+      const list = byProvider.get(m.provider) ?? []
+      list.push({ id: m.id, name: m.name || m.id, ...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {}) })
+      byProvider.set(m.provider, list)
+    }
+    return [...byProvider.entries()].map(([provider, list]) => ({
+      label: provider,
+      options: list.map((m) => ({
+        value: `${provider}:${m.id}`,
+        label: m.name,
+        ...(m.contextWindow !== undefined ? { hint: formatTokens(m.contextWindow) } : {}),
+      })),
+    }))
+  }, [models])
 
-  const hasModelSelection = activeModel !== null && modelOptions.some((o) => o.value === activeModel)
+  const hasModelSelection = activeModel !== null && modelGroups.some((g) => g.options.some((o) => o.value === activeModel))
   // Source of truth is the AppSnapshot pushed by main: the badge flips the
   // moment the persisted mode changes, even while the settings sheet is busy.
   const approvalMode = snapshot?.toolApprovalMode ?? 'ask'
@@ -106,7 +120,7 @@ export default function TopBar({
         <Select
           label={t('topbar.modelLabel')}
           value={hasModelSelection ? activeModel : null}
-          options={modelOptions}
+          groups={modelGroups}
           onChange={(v) => {
             const i = v.indexOf(':')
             if (i > 0) onSetModel(v.slice(0, i), v.slice(i + 1))

@@ -10,9 +10,9 @@ const SCREENSHOTS = join(PROJECT_ROOT, 'artifacts', 'screenshots')
 
 const API_METHODS = [
   'abort', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deleteSession',
-  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getExtensions', 'getProviderConfig', 'getSessionStats', 'getSettings',
+  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getExtensions', 'getProviderConfig', 'getProviderTypes', 'getSessionStats', 'getSettings',
   'getSnapshot', 'logoutProvider', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
-  'refreshModels', 'reloadSession', 'renameSession', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
+  'refreshModels', 'reloadSession', 'renameSession', 'saveProviderKey', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
   'setThinking', 'setToolApprovalMode', 'testProviderConnection', 'updateSettings', 'quitApp',
 ].sort()
 

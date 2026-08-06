@@ -120,6 +120,8 @@ ipcMain.handle(IPC.appInfo, (): AppInfo => ({
 ipcMain.handle(IPC.dynamicCommands, () => runtime.getDynamicCommands())
 ipcMain.handle(IPC.extensions, () => runtime.getExtensions())
 ipcMain.handle(IPC.providerConfig, (_event, providerId: unknown) => runtime.getProviderConfig(textArg(providerId, 'provider')))
+ipcMain.handle(IPC.providerTypes, () => runtime.getProviderTypes())
+ipcMain.handle(IPC.saveProviderKey, (_event, providerId: unknown, apiKey: unknown) => runtime.saveProviderKey(textArg(providerId, 'provider'), textArg(apiKey, 'apiKey')))
 ipcMain.handle(IPC.testConnection, (_event, config: unknown) => {
   if (!isProviderConnectionTest(config)) throw new Error('Invalid connection test')
   return runtime.testProviderConnection(config)

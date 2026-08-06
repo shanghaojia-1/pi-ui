@@ -45,8 +45,8 @@ describe('i18n dictionary', () => {
 })
 
 describe('theme catalog', () => {
-  it('offers system + five explicit themes', () => {
-    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest'])
+  it('offers system + six explicit themes', () => {
+    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest', 'dongbei-yujie'])
   })
 
   it('every theme has a translated label and a swatch', () => {
@@ -55,5 +55,9 @@ describe('theme catalog', () => {
       expect(translate('en', theme.labelKey), theme.id).not.toBe(theme.labelKey)
       expect(theme.swatch.length).toBeGreaterThan(0)
     }
+    const dongbeiYujie = THEMES.find((theme) => theme.id === 'dongbei-yujie')
+    expect(dongbeiYujie?.hintKey).toBe('settings.theme.dongbeiYujieHint')
+    expect(dongbeiYujie?.quote).toBe('带派不老铁')
+    expect(dongbeiYujie?.artwork).toContain('dongbei-yujie-theme.png')
   })
 })

@@ -60,11 +60,9 @@ test.describe.serial('new provider modal + connection test (isolated)', () => {
     const modal = page.getByRole('dialog', { name: '添加自定义提供商' })
     await expect(modal).toBeVisible()
 
-    // Provider type preset: picking Ollama fills the API flavor + a default URL.
-    await modal.getByRole('radio', { name: 'Ollama' }).click()
-    await expect(modal.locator('#custom-url')).toHaveValue('http://localhost:11434/v1')
+    // Default type is Custom: the full form (ID/URL/API/models) is shown.
+    await expect(modal.locator('#custom-url')).toBeVisible()
     await expect(modal.locator('#custom-api')).toHaveValue('openai-completions')
-    await modal.locator('#custom-url').fill('')
 
     // Test connection with an unreachable URL -> network failure message.
     await modal.locator('#custom-url').fill('http://127.0.0.1:1/v1')

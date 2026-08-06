@@ -1748,11 +1748,11 @@ describe('telemetry', () => {
       expect(t.tokenRateKind).toBe('unavailable')
 
       await vi.advanceTimersByTimeAsync(2000)
-      p.handleEvent(updateEvent(textMsg('Hello streamed'))) // 14 chars over 2s
+      p.handleEvent(updateEvent(textMsg('Hello streamed'))) // +9 chars over 2s
       t = runtime.snapshot().telemetry
       expect(t.ttftMs).toBe(500) // first content stays fixed at the first update
       expect(t.tokenRateKind).toBe('live-estimate')
-      expect(t.tokenRate).toBeCloseTo((14 / 4) / 2, 10)
+      expect(t.tokenRate).toBeCloseTo((9 / 4) / 2, 10) // incremental: 14-5 chars over 2s
       expect(t.latestOutputTokens).toBeNull()
 
       p.handleEvent(endEvent(textMsg('Hello streamed', {
@@ -1768,31 +1768,44 @@ describe('telemetry', () => {
     }
   })
 
-  it('counts thinking text in the live-estimate rate (SDK thinking parts)', async () => {
+  it('counts thinking text in the live-estimate rate and keeps it moving (SDK thinking parts)', async () => {
     const { runtime } = await initStreaming()
     const p = priv(runtime)
     vi.useFakeTimers()
     try {
-      const thinking = 'Let me reason carefully about this problem and its constraints.'
+      const t1 = 'Let me reason'
+      const t2 = 'Let me reason carefully about this problem and its constraints.'
       p.handleEvent(startEvent(textMsg('')))
       await vi.advanceTimersByTimeAsync(500)
       // The SDK emits thinking as { type:'thinking', thinking: string }.
       p.handleEvent(updateEvent({
         role: 'assistant', timestamp: T, stopReason: 'pending',
-        content: [{ type: 'thinking', thinking }],
+        content: [{ type: 'thinking', thinking: t1 }],
       }))
       let t = runtime.snapshot().telemetry
       expect(t.ttftMs).toBe(500) // first content = thinking still fixes TTFT
 
-      await vi.advanceTimersByTimeAsync(2000)
+      await vi.advanceTimersByTimeAsync(1000)
       p.handleEvent(updateEvent({
         role: 'assistant', timestamp: T, stopReason: 'pending',
-        content: [{ type: 'thinking', thinking }, { type: 'text', text: 'Done' }],
+        content: [{ type: 'thinking', thinking: t2 }],
       }))
       t = runtime.snapshot().telemetry
       expect(t.tokenRateKind).toBe('live-estimate')
-      // thinking chars + text chars over the 2s since first content
-      expect(t.tokenRate).toBeCloseTo(((thinking.length + 4) / 4) / 2, 10)
+      // Incremental: (t2.length - t1.length) chars over the 1s since the last update.
+      expect(t.tokenRate).toBeCloseTo(((t2.length - t1.length) / 4) / 1, 10)
+      const rateDuringThinking = t.tokenRate
+
+      // A later text delta over a NEW interval is EMA-smoothed with the old rate.
+      await vi.advanceTimersByTimeAsync(1000)
+      p.handleEvent(updateEvent({
+        role: 'assistant', timestamp: T, stopReason: 'pending',
+        content: [{ type: 'thinking', thinking: t2 }, { type: 'text', text: 'Done' }],
+      }))
+      t = runtime.snapshot().telemetry
+      expect(t.tokenRateKind).toBe('live-estimate')
+      const instant = (4 / 4) / 1 // +4 chars ('Done') over 1s
+      expect(t.tokenRate).toBeCloseTo(instant * 0.6 + rateDuringThinking! * 0.4, 10)
     } finally {
       vi.useRealTimers()
     }
@@ -2429,6 +2442,7 @@ describe('custom provider config', () => {
       api: 'openai-completions',
       models: [{ id: 'llama3.1:8b', name: 'Llama' }, { id: 'qwen' }],
       hasApiKey: true,
+      builtin: false,
     })
     expect(JSON.stringify(config)).not.toContain('sk-secret') // key never leaks
   })
@@ -2491,6 +2505,65 @@ describe('custom provider config', () => {
     await runtime.addCustomProvider({ id: 'p', baseUrl: 'http://x', api: 'openai-completions', apiKey: 'sk-new', models: [{ id: 'm' }] })
     const written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
     expect(written.providers.p.apiKey).toBe('sk-new')
+  })
+})
+
+describe('provider types & built-in key save', () => {
+  it('getProviderTypes lists built-in providers and marks configured ones', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getAvailable: async () => [], getModel: () => null,
+      getProviders: () => [
+        { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com' },
+        { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com' },
+        { id: 'smec-aigateway', name: 'smec-aigateway', baseUrl: 'https://aigateway.smec-cn.com/v1' },
+        { id: 'bedrock', name: 'AWS Bedrock', baseUrl: undefined }, // credential-based: skipped
+      ],
+    })
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { 'smec-aigateway': { baseUrl: 'https://aigateway.smec-cn.com/v1', apiKey: 'sk' } },
+    }))
+    const runtime = await initRuntime()
+    const types = await runtime.getProviderTypes()
+    expect(types.map((t) => t.id).sort()).toEqual(['anthropic', 'deepseek', 'smec-aigateway'])
+    const smec = types.find((t) => t.id === 'smec-aigateway')
+    expect(smec?.configured).toBe(true)
+    const deepseek = types.find((t) => t.id === 'deepseek')
+    expect(deepseek?.configured).toBe(false)
+    expect(deepseek?.baseUrl).toBe('https://api.deepseek.com')
+  })
+
+  it('saveProviderKey persists the key and keeps existing provider fields', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getAvailable: async () => [], getModel: () => null,
+      refresh: async () => ({ errors: new Map() }),
+    })
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { deepseek: { name: 'DeepSeek', apiKey: 'sk-old' } },
+    }))
+    const runtime = await initRuntime()
+    await runtime.saveProviderKey('deepseek', 'sk-new')
+    const written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
+    expect(written.providers.deepseek).toEqual({ name: 'DeepSeek', apiKey: 'sk-new' })
+  })
+
+  it('getProviderConfig resolves the official endpoint for a built-in key-only config', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getAvailable: async () => [], getModel: () => null,
+      getProviders: () => [{ id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com' }],
+    })
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { deepseek: { apiKey: 'sk' } },
+    }))
+    const runtime = await initRuntime()
+    const config = await runtime.getProviderConfig('deepseek')
+    expect(config).toEqual({
+      id: 'deepseek',
+      baseUrl: 'https://api.deepseek.com',
+      api: 'openai-completions',
+      models: [],
+      hasApiKey: true,
+      builtin: true,
+    })
   })
 })
 

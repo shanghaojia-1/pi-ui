@@ -58,6 +58,9 @@ const api = {
   setToolApprovalMode: vi.fn(),
   getExtensions: vi.fn().mockResolvedValue({ extensions: [], errors: [] }),
   getProviderConfig: vi.fn(),
+  getProviderTypes: vi.fn().mockResolvedValue([]),
+  saveProviderKey: vi.fn(),
+  addCustomProvider: vi.fn(),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>
@@ -163,6 +166,7 @@ describe('SettingsPanel', () => {
       api: 'openai-completions',
       models: [{ id: 'llama3.1:8b' }, { id: 'qwen2.5' }],
       hasApiKey: true,
+      builtin: false,
     })
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
     await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
@@ -178,6 +182,34 @@ describe('SettingsPanel', () => {
     expect((screen.getByLabelText('提供商 ID（必填）') as HTMLInputElement).disabled).toBe(true)
     // Key stays blank with a keep-current hint.
     expect((screen.getByLabelText('API Key（可选）') as HTMLInputElement).value).toBe('')
+  })
+
+
+
+
+
+  it('built-in flow: pick a pi type, fill the key, saveProviderKey is called', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.getProviderTypes).mockResolvedValue([
+      { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', configured: false },
+      { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', configured: false },
+    ])
+    vi.mocked(api.saveProviderKey).mockResolvedValue(settings())
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '新建供应商' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '添加自定义提供商' })).toBeTruthy())
+    // Step 1: pick a built-in type.
+    fireEvent.change(screen.getByLabelText('供应商类型'), { target: { value: 'deepseek' } })
+    // Official endpoint hint; the custom fields (ID/URL/models) are hidden.
+    expect(screen.getByText(/api.deepseek.com/)).toBeTruthy()
+    expect(screen.queryByLabelText('提供商 ID（必填）')).toBeNull()
+    expect(screen.queryByLabelText('Base URL（必填）')).toBeNull()
+    // Step 2: the key.
+    fireEvent.change(screen.getByLabelText('API Key（可选）'), { target: { value: 'sk-ds' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加提供商' }))
+    await waitFor(() => expect(api.saveProviderKey).toHaveBeenCalledWith('deepseek', 'sk-ds'))
+    expect(api.addCustomProvider).not.toHaveBeenCalled()
   })
 
 
