@@ -32,9 +32,11 @@ jobs:
       # typecheck + electron-vite production build
       - run: npm run build
 
-      # 不签名（identity: null），zip 目标来自 package.json 的 mac.target
+      # 不签名（identity: null），zip 目标来自 package.json 的 mac.target。
+      # --publish never：CI 环境下 electron-builder 会隐式触发发布并索要
+      # GH_TOKEN，上传统一由 publish job 用 gh CLI 完成。
       - name: Package macOS zips
-        run: npx electron-builder --mac zip --x64 --arm64
+        run: npx electron-builder --mac zip --x64 --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
@@ -60,10 +62,10 @@ jobs:
       - run: npm run build
 
       # CLI 指定 zip 目标：electron-builder 按 package.json 的 artifactName
-      # 产出 Pi-Studio-<version>-win-x64.zip
+      # 产出 Pi-Studio-<version>-win-x64.zip；--publish never 同上
       - name: Package Windows zip
         shell: bash
-        run: npx electron-builder --win zip --x64
+        run: npx electron-builder --win zip --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
@@ -89,9 +91,10 @@ jobs:
       - run: npm run build
 
       # AppImage 单文件可执行（chmod +x 后直接运行）；AppImage 目标只能
-      # 在 Linux runner 上构建，产物命名来自 package.json 的 appImage 段
+      # 在 Linux runner 上构建，产物命名来自 package.json 的 appImage 段；
+      # --publish never 同上
       - name: Package Linux AppImage
-        run: npx electron-builder --linux AppImage --x64
+        run: npx electron-builder --linux AppImage --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
