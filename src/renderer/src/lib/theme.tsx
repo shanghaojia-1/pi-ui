@@ -1,9 +1,12 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
 import dongbeiYujieAvatar from '../assets/dongbei-yujie-avatar.png'
+import dongbeiYujieRightPanelArtwork from '../assets/dongbei-yujie-right-panel.png'
 import dongbeiYujieArtwork from '../assets/dongbei-yujie-theme.png'
 import hashimotoYunaAvatar from '../assets/hashimoto-yuna-avatar.png'
+import hashimotoYunaRightPanelArtwork from '../assets/hashimoto-yuna-right-panel.png'
 import hashimotoYunaArtwork from '../assets/hashimoto-yuna-theme-v2.png'
 import mikamiYuaAvatar from '../assets/mikami-yua-avatar.png'
+import mikamiYuaRightPanelArtwork from '../assets/mikami-yua-right-panel.png'
 import mikamiYuaArtwork from '../assets/mikami-yua-theme.png'
 
 export type ThemeId = 'system' | 'light' | 'dark' | 'dongbei-yujie' | 'hashimoto-yuna' | 'mikami-yua'
@@ -45,6 +48,8 @@ export interface ThemeDefinition {
   readonly artwork?: string
   readonly artworkPosition?: string
   readonly artworkOpacity?: number
+  readonly rightPanelArtwork?: string
+  readonly rightPanelArtworkPosition?: string
   readonly avatar?: string
   readonly avatarPosition?: string
   readonly quote?: string
@@ -458,6 +463,8 @@ export const THEMES: readonly ThemeDefinition[] = [
     artwork: dongbeiYujieArtwork,
     artworkPosition: 'center center',
     artworkOpacity: 0.92,
+    rightPanelArtwork: dongbeiYujieRightPanelArtwork,
+    rightPanelArtworkPosition: 'center center',
     avatar: dongbeiYujieAvatar,
     avatarPosition: 'center 34%',
     quote: '带派不老铁 · Pi Agent',
@@ -472,6 +479,8 @@ export const THEMES: readonly ThemeDefinition[] = [
     artwork: hashimotoYunaArtwork,
     artworkPosition: 'right center',
     artworkOpacity: 1,
+    rightPanelArtwork: hashimotoYunaRightPanelArtwork,
+    rightPanelArtworkPosition: 'center center',
     avatar: hashimotoYunaAvatar,
     avatarPosition: 'center 34%',
     quote: '黑樱桃香槟之夜 · Pi Agent',
@@ -486,6 +495,8 @@ export const THEMES: readonly ThemeDefinition[] = [
     artwork: mikamiYuaArtwork,
     artworkPosition: 'right center',
     artworkOpacity: 1,
+    rightPanelArtwork: mikamiYuaRightPanelArtwork,
+    rightPanelArtworkPosition: '80% center',
     avatar: mikamiYuaAvatar,
     avatarPosition: 'center 34%',
     quote: '爱琴海珍珠假日 · Pi Agent',
@@ -553,6 +564,11 @@ function applyTheme(theme: ThemeId): void {
   root.style.setProperty('--theme-artwork', definition.artwork === undefined ? 'none' : `url(${JSON.stringify(definition.artwork)})`)
   root.style.setProperty('--theme-artwork-position', definition.artworkPosition ?? 'center')
   root.style.setProperty('--theme-artwork-opacity', String(definition.artworkOpacity ?? 0))
+  root.style.setProperty(
+    '--theme-right-panel-artwork',
+    definition.rightPanelArtwork === undefined ? 'none' : `url(${JSON.stringify(definition.rightPanelArtwork)})`,
+  )
+  root.style.setProperty('--theme-right-panel-artwork-position', definition.rightPanelArtworkPosition ?? 'center')
   root.style.setProperty('--theme-avatar', definition.avatar === undefined ? 'none' : `url(${JSON.stringify(definition.avatar)})`)
   root.style.setProperty('--theme-avatar-position', definition.avatarPosition ?? 'center')
   root.style.setProperty('--theme-quote', definition.quote === undefined ? '""' : JSON.stringify(definition.quote))

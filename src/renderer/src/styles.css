@@ -44,6 +44,8 @@
   --theme-artwork: none;
   --theme-artwork-position: center;
   --theme-artwork-opacity: 0;
+  --theme-right-panel-artwork: none;
+  --theme-right-panel-artwork-position: center;
   --theme-avatar: none;
   --theme-avatar-position: center;
   --theme-quote: "";
@@ -3316,6 +3318,14 @@ html[data-theme='hashimoto-yuna'] .right-panel {
   box-shadow: 0 0 34px rgba(0, 0, 0, 0.26);
 }
 
+html[data-theme='hashimoto-yuna'] .right-panel {
+  background-image: linear-gradient(180deg, rgba(13, 9, 12, 0.2), rgba(13, 9, 12, 0.42)),
+    var(--theme-right-panel-artwork);
+  background-position: center, var(--theme-right-panel-artwork-position);
+  background-size: auto, cover;
+  background-repeat: no-repeat;
+}
+
 html[data-theme='hashimoto-yuna'] .sidebar-workspace,
 html[data-theme='hashimoto-yuna'] .sidebar-actions,
 html[data-theme='hashimoto-yuna'] .sidebar-footer,
@@ -3668,6 +3678,7 @@ html[data-theme='hashimoto-yuna'] .rp-header {
   font-size: 13px;
   letter-spacing: 0.06em;
   background: linear-gradient(90deg, rgba(74, 23, 40, 0.22), transparent);
+  backdrop-filter: blur(10px) saturate(0.85);
 }
 
 html[data-theme='hashimoto-yuna'] .rp-header::before {
@@ -3684,6 +3695,15 @@ html[data-theme='hashimoto-yuna'] .sett-extension {
   border-radius: 12px;
   background: linear-gradient(145deg, rgba(37, 28, 33, 0.86), rgba(22, 16, 20, 0.88));
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme='hashimoto-yuna'] .rp-empty {
+  margin: 12px 8px;
+  border: 1px solid rgba(213, 170, 126, 0.16);
+  border-radius: 14px;
+  background: rgba(18, 13, 17, 0.72);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px) saturate(0.82);
 }
 
 html[data-theme='hashimoto-yuna'] .rp-section-head:hover,
@@ -3827,6 +3847,14 @@ html[data-theme='dongbei-yujie'] .right-panel {
   background-size: 24px 24px, auto;
   border-color: rgba(230, 83, 135, 0.22);
   box-shadow: 0 0 30px rgba(149, 41, 83, 0.08);
+}
+
+html[data-theme='dongbei-yujie'] .right-panel {
+  background-image: linear-gradient(180deg, rgba(255, 246, 250, 0.12), rgba(255, 240, 247, 0.28)),
+    var(--theme-right-panel-artwork);
+  background-position: center, var(--theme-right-panel-artwork-position);
+  background-size: auto, cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dongbei-yujie'] .sidebar-workspace,
@@ -4197,6 +4225,7 @@ html[data-theme='dongbei-yujie'] .rp-header {
   font-size: 13px;
   letter-spacing: 0.035em;
   background: linear-gradient(90deg, rgba(255, 197, 218, 0.42), transparent);
+  backdrop-filter: blur(10px) saturate(0.92);
 }
 
 html[data-theme='dongbei-yujie'] .rp-header::before {
@@ -4213,6 +4242,15 @@ html[data-theme='dongbei-yujie'] .sett-extension {
   border-radius: 13px;
   background: rgba(255, 252, 253, 0.82);
   box-shadow: 0 8px 20px rgba(162, 42, 87, 0.08), inset 0 1px 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .rp-empty {
+  margin: 12px 8px;
+  border: 1px solid rgba(230, 83, 135, 0.18);
+  border-radius: 14px;
+  background: rgba(255, 252, 253, 0.72);
+  box-shadow: 0 10px 24px rgba(162, 42, 87, 0.08);
+  backdrop-filter: blur(10px) saturate(0.9);
 }
 
 html[data-theme='dongbei-yujie'] .rp-section-head:hover,
@@ -4399,6 +4437,14 @@ html[data-theme='mikami-yua'] .right-panel {
   background-size: 30px 22px, auto;
   border-color: rgba(11, 148, 216, 0.2);
   box-shadow: 0 0 30px rgba(7, 104, 155, 0.08);
+}
+
+html[data-theme='mikami-yua'] .right-panel {
+  background-image: linear-gradient(180deg, rgba(244, 251, 255, 0.02), rgba(229, 246, 255, 0.08)),
+    var(--theme-right-panel-artwork);
+  background-position: center, var(--theme-right-panel-artwork-position);
+  background-size: auto, cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='mikami-yua'] .sidebar-workspace,
@@ -4780,6 +4826,14 @@ html[data-theme='mikami-yua'] .sett-extension {
   border-radius: 13px;
   background: rgba(251, 254, 255, 0.84);
   box-shadow: 0 8px 22px rgba(7, 104, 155, 0.08), inset 0 1px 0 #fff;
+}
+
+html[data-theme='mikami-yua'] .rp-empty {
+  margin: 12px 8px;
+  border: 1px solid rgba(11, 148, 216, 0.16);
+  border-radius: 14px;
+  background: rgba(251, 254, 255, 0.7);
+  box-shadow: 0 10px 24px rgba(7, 104, 155, 0.08);
 }
 
 html[data-theme='mikami-yua'] .rp-section-head:hover,

@@ -69,10 +69,17 @@ test.describe.serial('i18n + themes (isolated)', () => {
 
     const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())
     const dataTheme = () => page.evaluate(() => document.documentElement.dataset.theme ?? null)
+    const rightPanelBackground = () =>
+      page.evaluate(() => getComputedStyle(document.querySelector('.right-panel')!).backgroundImage)
+    const rightPanelPosition = () =>
+      page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--theme-right-panel-artwork-position').trim())
+    const rightPanelHeaderBackdrop = () =>
+      page.evaluate(() => getComputedStyle(document.querySelector('.rp-header')!).backdropFilter)
 
     await dialog.locator('.sett-theme', { hasText: '东北雨姐' }).click()
     expect(await dataTheme()).toBe('dongbei-yujie')
     await expect.poll(bg).toBe('#fff0f5')
+    await expect.poll(rightPanelBackground).toContain('dongbei-yujie-right-panel')
     await expect(dialog.getByText('带派不老铁')).toBeVisible()
     // Persona copy replaces the neutral sidebar labels right away.
     await expect(page.getByRole('button', { name: '整新活儿' })).toBeVisible()
@@ -80,12 +87,16 @@ test.describe.serial('i18n + themes (isolated)', () => {
     await dialog.locator('.sett-theme', { hasText: '桥本有菜' }).click()
     expect(await dataTheme()).toBe('hashimoto-yuna')
     await expect.poll(bg).toBe('#120e11')
+    await expect.poll(rightPanelBackground).toContain('hashimoto-yuna-right-panel')
     await expect(dialog.getByText('黑樱桃 · 香槟金')).toBeVisible()
     await expect(page.getByRole('button', { name: '新开一夜' })).toBeVisible()
 
     await dialog.locator('.sett-theme', { hasText: '三上悠亚' }).click()
     expect(await dataTheme()).toBe('mikami-yua')
     await expect.poll(bg).toBe('#eaf8ff')
+    await expect.poll(rightPanelBackground).toContain('mikami-yua-right-panel')
+    await expect.poll(rightPanelPosition).toBe('80% center')
+    await expect.poll(rightPanelHeaderBackdrop).toBe('none')
     await expect(dialog.getByText('爱琴海 · 珍珠白')).toBeVisible()
     await expect(page.getByRole('button', { name: '一起扬帆吧' })).toBeVisible()
 

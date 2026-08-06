@@ -35,13 +35,13 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/renderer/src/lib/theme.tsx` | `ThemeId`、设计令牌、主题目录、图片与头像注册、CSS 变量注入、`THEME_COPY` 主题专属文案、主题 ID 订阅（`subscribeThemeId`） |
+| `src/renderer/src/lib/theme.tsx` | `ThemeId`、设计令牌、主题目录、主背景/右栏竖图/头像注册、CSS 变量注入、`THEME_COPY` 主题专属文案、主题 ID 订阅（`subscribeThemeId`） |
 | `src/renderer/src/lib/i18n.tsx` | 基础中英文词典；主题感知的 `t()`（`THEME_COPY` 命中时优先于基础词典） |
 | `src/renderer/src/styles.css` | 基础组件样式和各主题的完整组件级覆盖 |
 | `src/renderer/src/App.tsx` | 状态栏标准状态映射（`runState` → `app.status.*`），让状态文字走主题文案而非主进程英文 `statusText` |
-| `src/renderer/src/assets/` | 原图、处理后的横向背景和方形头像 |
-| `tests/unit/i18n.test.ts` | 主题目录、翻译、素材、主题属性和 `THEME_COPY` 文案测试 |
-| `tests/e2e/i18n-theme.spec.ts` | 设置页主题数量、切换、CSS 变量、持久化和人物文案切换测试 |
+| `src/renderer/src/assets/` | 原图、处理后的横向主背景、右栏竖图和方形头像 |
+| `tests/unit/i18n.test.ts` | 主题目录、翻译、主背景/右栏竖图/头像素材、主题属性和 `THEME_COPY` 文案测试 |
+| `tests/e2e/i18n-theme.spec.ts` | 设置页主题数量、切换、CSS 变量、右栏背景/焦点、持久化和人物文案切换测试 |
 
 `THEMES` 是主题元数据的单一事实来源。设置页缩略图、主题切换、启动页标语和 Agent 头像都会从这里读取，不应在组件中另建主题名单。
 
@@ -53,7 +53,7 @@
 - 令牌常量：`SAMPLE_THEME`
 - 翻译键：`settings.theme.sampleTheme`、`settings.theme.sampleThemeHint`
 - CSS 根选择器：`html[data-theme='sample-theme']`
-- 素材：`sample-theme-original.png`、`sample-theme-theme.png`、`sample-theme-avatar.png`
+- 素材：`sample-theme-original.png`、`sample-theme-theme.png`、`sample-theme-right-panel.png`、`sample-theme-avatar.png`
 - 文案键：直接复用 `i18n.tsx` 的现有 key，不新建 key；主题化文本写在 `THEME_COPY` 里（见第 8 节）
 
 不要用显示名称作为持久化标识，也不要在发布后随意更改 `ThemeId`，因为该值会存入 `localStorage` 的 `pi-studio-theme`。
@@ -62,13 +62,14 @@
 
 ### 5.1 必备素材
 
-人物主题通常保留三份文件：
+人物主题通常保留四份文件：
 
 - `*-original.*`：用户提供的原始素材，作为可追溯源文件，不在运行时代码中引用；
 - `*-theme.png`：应用主背景和启动页使用的横向构图；
+- `*-right-panel.png`：右侧活动面板使用的竖向构图，人物主体应放在 `cover` 裁切后仍稳定可见的中央安全区；
 - `*-avatar.png`：Agent 消息头像使用的方形裁切。
 
-运行时只导入 `*-theme.png` 和 `*-avatar.png`。如果仓库体积成为问题，可在得到用户同意后不提交原图，但不得覆盖唯一原始文件。
+运行时只导入 `*-theme.png`、`*-right-panel.png` 和 `*-avatar.png`。如果仓库体积成为问题，可在得到用户同意后不提交原图，但不得覆盖唯一原始文件。
 
 ### 5.2 背景构图
 
@@ -84,7 +85,32 @@
 
 处理素材时应保留纵横比，不要放大低分辨率图片到明显失真。避免过度磨皮、过饱和、明显锐化光圈和不可逆地覆盖原图。
 
-### 5.3 头像裁切
+### 5.3 右栏竖图构图与裁切
+
+右侧活动面板是独立的窄长展示面，不应直接复用横向主背景。当前布局在 `App.tsx` 中将展开后的右栏固定为 `344px`；应用窗口默认高度为 `920px`，最小高度为 `680px`。竖图推荐使用 `1024×1536` 或同等 `2:3` 比例，并使用 `background-size: cover`。
+
+人物主题的右栏竖图原则上必须包含人物主体，不应只生成调色相近的纯装饰背景，除非用户明确要求无人物。可在用户允许生成式修改时换姿势，但应保留可辨识的身份、主题服装、场景和色彩语言。
+
+构图和焦点必须按实际面板而不是原图观感验收：
+
+- 人脸、躯干和关键姿势应落在竖图中央安全区，左右不要依赖画布边缘；
+- 必须同时检查 `344×680`、`344×920` 和 `344×1080` 三种容器；窗口越高，`cover` 对竖图左右的裁切越强；
+- 不要因为原图中人物看起来“接近中间”就默认使用 `center center`；应根据裁切后的显示位置设置 `rightPanelArtworkPosition`；
+- 当图片渲染宽度大于 `344px` 时，`background-position-x` 的百分比越大，图片整体越向左移；人物显示位置也会向左移；
+- 对于高度为 `H`、源图尺寸为 `Wi×Hi` 的常见情况，可用 `s = H / Hi`、`Wr = Wi × s` 估算渲染宽度；人物源图横坐标为 `Xs` 时，为了使其落在面板中心，焦点比例可估算为 `p = (Xs × s - 172) / (Wr - 344)`，最后限制在 `0–1` 并转为百分比；
+- 计算只是起点，最终必须在真实右栏中检查人物是否视觉居中，而不是只打开原图查看。
+
+### 5.4 右栏清晰度与内容可读性
+
+主背景要承载长文本，通常需要较强的渐变保护；右栏竖图是更小的主题展示面，图片应比主背景更清晰，不应照搬主背景的遮罩和模糊强度。
+
+- 优先用有足够底色和边框的 `.rp-section`、`.patch` 等卡片保护文字，不要模糊整个 `.right-panel`；
+- 右栏主题色渐变应从低不透明度开始，只加到能维持文字层级的程度；浅色主题可从 `0.02–0.12` 试起，深色主题按对比度需求单独调整；
+- `backdrop-filter: blur(...)` 会直接模糊卡片背后的人物。`.rp-header`、`.rp-empty` 默认应使用半透明底色而非模糊；确需使用时必须局部化并进行左右清晰度对比；
+- 不要在 `.right-panel` 本身上使用 `filter`，否则图片和内部文字、图标都会一起受影响；
+- 验收时需并排比较主背景和右栏：右栏人脸与服装细节不应显得更虚，但空状态文字、活动卡片和工具调用仍必须清楚。
+
+### 5.5 头像裁切
 
 头像推荐至少 256×256：
 
@@ -94,9 +120,9 @@
 - 通过 `avatarPosition` 微调圆形框中的位置；
 - 点击后的灯箱大图不能糊成色块。
 
-### 5.4 素材验收
+### 5.6 素材验收
 
-处理后必须实际打开查看背景和头像，不能只相信命令成功。检查：黑边、拼接缝、错误裁切、人物变形、色带、透明通道异常以及文件体积。正式构建还应确认原图没有被意外打入渲染产物。
+处理后必须实际打开查看主背景、右栏竖图和头像，不能只相信命令成功。检查：黑边、拼接缝、错误裁切、人物变形、色带、透明通道异常以及文件体积。正式构建还应确认原图没有被意外打入渲染产物。
 
 ## 6. 注册主题
 
@@ -107,6 +133,7 @@
 ```tsx
 import sampleThemeAvatar from '../assets/sample-theme-avatar.png'
 import sampleThemeArtwork from '../assets/sample-theme-theme.png'
+import sampleThemeRightPanelArtwork from '../assets/sample-theme-right-panel.png'
 
 export type ThemeId =
   | 'system'
@@ -164,6 +191,8 @@ const SAMPLE_THEME: ThemeVariables = {
   artwork: sampleThemeArtwork,
   artworkPosition: 'right center',
   artworkOpacity: 1,
+  rightPanelArtwork: sampleThemeRightPanelArtwork,
+  rightPanelArtworkPosition: 'center center',
   avatar: sampleThemeAvatar,
   avatarPosition: 'center 34%',
   quote: 'Theme signature · Pi Agent',
@@ -176,6 +205,8 @@ const SAMPLE_THEME: ThemeVariables = {
 - `colorScheme`：影响原生控件和浏览器颜色方案，必须与整体明暗一致；
 - `artworkPosition`：主背景及设置缩略图的默认焦点；
 - `artworkOpacity`：全局装饰图透明度，完整背景通常为 `1`；
+- `rightPanelArtwork`：右侧活动面板的独立竖图；无竖图的主题保持默认面板背景；
+- `rightPanelArtworkPosition`：竖图在活动面板中的焦点；人物主题应按 5.3 节的实际裁切结果设置，不要无条件固定为 `center center`；
 - `avatarPosition`：头像的 `background-position`；
 - `quote`：启动页底部主题标语。人物主题还应配套 `THEME_COPY` 专属文案（见第 8 节），让整套产品开口就是这个人。
 
@@ -239,6 +270,21 @@ html[data-theme='sample-theme'] .main {
 
 渐变方向应根据人物位置调整。消息表面可半透明，但必须有足够背景、边框或阴影保证长文本与代码可读。不要在人物脸部上方叠加主题 quote 或大型装饰字；必要时隐藏 `.app::after`。
 
+右栏竖图应使用独立变量和焦点，不要复用 `--theme-artwork`：
+
+```css
+html[data-theme='sample-theme'] .right-panel {
+  background-image:
+    linear-gradient(180deg, rgba(250, 250, 250, 0.02), rgba(245, 245, 245, 0.08)),
+    var(--theme-right-panel-artwork);
+  background-position: center, var(--theme-right-panel-artwork-position);
+  background-size: auto, cover;
+  background-repeat: no-repeat;
+}
+```
+
+第一层渐变只用于统一色调和轻微保护，第二层才是竖图。不同背景层的 `background-position` 和 `background-size` 要按逗号顺序一一对应。
+
 ### 7.3 Agent 头像回退
 
 带头像主题需要把内部 π 标记隐藏。当前 CSS 使用主题 ID 列表：
@@ -299,7 +345,7 @@ html[data-theme='sample-theme'] .msg-avatar-assistant .msg-avatar-pi {
 
 1. 主题 ID 数组和测试描述中的数量；
 2. 新主题 `hintKey`；
-3. `artwork` 和 `avatar` 文件名；
+3. `artwork`、`rightPanelArtwork` 和 `avatar` 文件名，以及有特殊裁切需求时的 `rightPanelArtworkPosition`；
 4. `colorScheme`；
 5. 有业务意义的 `quote` 或关键属性。
 
@@ -313,8 +359,10 @@ html[data-theme='sample-theme'] .msg-avatar-assistant .msg-avatar-pi {
 2. 点击新的中/英文显示名称；
 3. `document.documentElement.dataset.theme`；
 4. 一个具有辨识度的 CSS 变量，如 `--bg`；
-5. 设置页副标题可见；
-6. 主题仍写入 `pi-studio-theme`。
+5. 人物主题的 `.right-panel` 计算样式已包含对应的 `*-right-panel` 素材；
+6. `--theme-right-panel-artwork-position` 与主题目录一致；若主题明确要求右栏保持清晰，还应断言 `.rp-header` 等关键区域没有意外的 `backdrop-filter`；
+7. 设置页副标题可见；
+8. 主题仍写入 `pi-studio-theme`。
 
 主题交互有改动时，还应补充头像灯箱、菜单层级或启动页的针对性测试，而不是只依赖颜色断言。
 
@@ -347,6 +395,8 @@ npm run build
 - 思考强度、模型等下拉菜单不被消息遮挡；
 - 输入框只有一个外框，附件、发送和停止按钮状态正常；
 - 左右面板、设置、统计和审批弹窗没有遗漏基础主题样式；
+- 右栏在 `344×680`、`344×920` 和 `344×1080` 三种尺寸下都没有将人脸或关键姿势裁出，人物不贴左/右边缘；
+- 右栏的空状态和有活动卡片状态都已检查，图片比主背景清晰且文字仍可读；
 - 浅色与深色文本、错误/成功/警告状态均有足够对比度；
 - 缩放窗口后不发生水平溢出或主体布局坍塌；
 - 主题文案：中英文切换正确、切主题即时刷新、控件标签无截断、占位符完整；
@@ -359,7 +409,7 @@ npm run build
 1. 阅读本文，检查工作区未提交改动，保护用户已有修改。
 2. 查看原始素材尺寸和实际画面，确认人物位置与可用安全区。
 3. 从素材提炼 3–5 个视觉关键词，确定明暗方案、主色、强调色和组件材质。
-4. 先制作并查看横向背景和头像；若素材要求不明确，优先保留原图而非重绘人物。
+4. 先制作并查看横向背景、右栏竖图和头像；右栏必须按 `344px` 实际宽度试裁切。若素材要求不明确，优先保留原图而非重绘人物。
 5. 注册 `ThemeId`、完整令牌、目录项和双语文案。
 6. 人物主题：先调研人物公开形象、提炼语气关键词，再编写 `THEME_COPY` 专属文案（见第 8 节）。
 7. 在独立 CSS 区块完成全程序组件级设计，同时遵守布局与交互契约。
@@ -374,13 +424,13 @@ npm run build
 只有同时满足以下条件，主题才算完成：
 
 - 能从设置页发现、选择、持久化并正确恢复；
-- 背景和头像素材清晰、构图安全且无异常边缘；
+- 主背景、右栏竖图和头像素材清晰、构图安全且无异常边缘；
 - 全部核心界面形成一致而有辨识度的主题语言；
 - 对话区、输入区、菜单层级和头像交互没有回归；
 - 人物主题的体验文本全部人设化（`THEME_COPY`），技术性文本保持中性；
 - 主题文案中英文成对、占位符完整、切换即时生效且控件无截断；
 - 双语文案、主题目录、单元测试和 E2E 测试同步更新；
 - 类型检查、单元测试和正式构建通过；
-- 人工视觉检查覆盖启动页、对话页、设置页和至少一个窄窗口场景。
+- 人工视觉检查覆盖启动页、对话页、设置页、右栏空/非空状态和至少一个窄窗口场景。
 
 若只是令牌和背景已加入、组件级设计尚未完成，应明确标记为“主题骨架”，不能宣称完整主题已经交付。
