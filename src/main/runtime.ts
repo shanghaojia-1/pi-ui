@@ -2030,8 +2030,15 @@ export class PiRuntime {
   private contentChars(message: Record<string, unknown>): number {
     if (!Array.isArray(message.content)) return 0
     return message.content.reduce<number>((sum, part) => {
-      if (!RECORD(part) || (part.type !== 'text' && part.type !== 'thinking') || typeof part.text !== 'string') return sum
-      return sum + part.text.length
+      if (!RECORD(part) || (part.type !== 'text' && part.type !== 'thinking')) return sum
+      // The SDK emits thinking as { type:'thinking', thinking: string }
+      // (pi-ai ThinkingContent); older/other shapes may use `text`. Count it
+      // too so reasoning shows up in the live speed estimate.
+      const text = part.type === 'thinking'
+        ? (typeof part.thinking === 'string' ? part.thinking : typeof part.text === 'string' ? part.text : null)
+        : (typeof part.text === 'string' ? part.text : null)
+      if (text === null) return sum
+      return sum + text.length
     }, 0)
   }
 

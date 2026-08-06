@@ -1768,6 +1768,36 @@ describe('telemetry', () => {
     }
   })
 
+  it('counts thinking text in the live-estimate rate (SDK thinking parts)', async () => {
+    const { runtime } = await initStreaming()
+    const p = priv(runtime)
+    vi.useFakeTimers()
+    try {
+      const thinking = 'Let me reason carefully about this problem and its constraints.'
+      p.handleEvent(startEvent(textMsg('')))
+      await vi.advanceTimersByTimeAsync(500)
+      // The SDK emits thinking as { type:'thinking', thinking: string }.
+      p.handleEvent(updateEvent({
+        role: 'assistant', timestamp: T, stopReason: 'pending',
+        content: [{ type: 'thinking', thinking }],
+      }))
+      let t = runtime.snapshot().telemetry
+      expect(t.ttftMs).toBe(500) // first content = thinking still fixes TTFT
+
+      await vi.advanceTimersByTimeAsync(2000)
+      p.handleEvent(updateEvent({
+        role: 'assistant', timestamp: T, stopReason: 'pending',
+        content: [{ type: 'thinking', thinking }, { type: 'text', text: 'Done' }],
+      }))
+      t = runtime.snapshot().telemetry
+      expect(t.tokenRateKind).toBe('live-estimate')
+      // thinking chars + text chars over the 2s since first content
+      expect(t.tokenRate).toBeCloseTo(((thinking.length + 4) / 4) / 2, 10)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('marks the rate unavailable on abort when the turn never reached a final', async () => {
     const { runtime } = await initStreaming()
     const p = priv(runtime)
