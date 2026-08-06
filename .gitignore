@@ -2,8 +2,13 @@ node_modules/
 out/
 dist/
 release/
+release-ci/
+release-fixed-2/
 coverage/
 test-results/
 playwright-report/
+artifacts/
 .DS_Store
 *.log
+# agentic planning notes (superpowers skill)
+docs/superpowers/
