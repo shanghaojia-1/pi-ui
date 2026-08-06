@@ -14,7 +14,7 @@ import {
   type InlineExtension,
 } from '@earendil-works/pi-coding-agent'
 import type {
-  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
+  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
   ProviderConnectionTest, ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
@@ -1179,20 +1179,50 @@ export class PiRuntime {
     if (!session) return Promise.resolve({ extensions: [], errors: [] })
     try {
       const result = session.resourceLoader.getExtensions()
-      return Promise.resolve({
-        extensions: result.extensions.map((extension) => ({
-          path: extension.path,
-          resolvedPath: extension.resolvedPath,
-          sourceLabel: extension.sourceInfo.source || extension.path,
+      // One npm/git package can expose several file entries (e.g. pi-powerbar
+      // ships src/*/index.ts); the user installed ONE package, so merge them
+      // into a single card. Standalone files (source 'auto') stay one card
+      // each, and built-in inline extensions are hidden entirely.
+      const bySource = new Map<string, ExtensionInfo>()
+      for (const extension of result.extensions) {
+        const scope = extension.sourceInfo.scope
+        if (scope === 'temporary') continue
+        const source = extension.sourceInfo.source
+        const isPackage = source.startsWith('npm:') || source.startsWith('git:')
+        const key = isPackage ? source : extension.resolvedPath
+        const stats = {
           commandCount: extension.commands.size,
           toolCount: extension.tools.size,
           handlerCount: [...extension.handlers.values()].reduce((n, handlers) => n + handlers.length, 0),
-        })),
+        }
+        const existing = bySource.get(key)
+        if (existing) {
+          existing.commandCount += stats.commandCount
+          existing.toolCount += stats.toolCount
+          existing.handlerCount += stats.handlerCount
+          continue
+        }
+        bySource.set(key, {
+          path: extension.path,
+          resolvedPath: extension.resolvedPath,
+          sourceLabel: scope,
+          name: isPackage ? source.slice(4) : this.extensionFileDisplayName(extension.resolvedPath),
+          ...stats,
+        })
+      }
+      return Promise.resolve({
+        extensions: [...bySource.values()],
         errors: result.errors.map((e) => ({ path: e.path, error: e.error })),
       })
     } catch {
       return Promise.resolve({ extensions: [], errors: [] })
     }
+  }
+
+  /** File name without the script suffix, e.g. `~/…/hello.js` → `hello`. */
+  private extensionFileDisplayName(resolvedPath: string): string {
+    const file = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath
+    return file.replace(/\.(js|ts|mjs|cjs)$/i, '')
   }
 
   /** Registers a submitted runtime API key as a redaction target (memory only). */

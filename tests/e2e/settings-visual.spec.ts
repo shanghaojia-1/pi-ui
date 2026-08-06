@@ -139,19 +139,14 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
       .toBe(true)
   }
 
-  async function assertProviderSection(dialog: Locator): Promise<void> {
-    const snap = await snapshot()
-    const configuredCount = await dialog.getByText('已配置', { exact: false }).count()
-    const hasProviders = (snap.models as unknown[]).length > 0 || configuredCount > 0
-    if (hasProviders) {
-      // A provider is configured: its credential form with a password input is shown.
-      await expect(dialog.locator('input[type="password"]').first()).toBeVisible()
-    } else {
-      // Provider empty state: every provider is listed as unconfigured (no env-dependent assumption).
-      await expect(dialog.getByText('未配置', { exact: true }).first()).toBeVisible()
-      await expect(dialog.getByText('0 个模型', { exact: true }).first()).toBeVisible()
-      expect(configuredCount).toBe(0)
-    }
+  async function assertProvidersEntry(dialog: Locator): Promise<void> {
+    // The settings page offers entry points (New provider / refresh) plus a
+    // read-only list of already-configured providers; the active provider is
+    // chosen in the chat dialog, and there is no interactive key panel here.
+    await expect(dialog.getByRole('button', { name: '新建供应商' })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: /刷新模型列表/ })).toBeVisible()
+    await expect(dialog.locator('input[type="password"]')).toHaveCount(0)
+    await expect(dialog.locator('.sett-provider-search')).toHaveCount(0)
   }
 
   test('telemetry bar: seeded usage renders cache hit & recent output 240, speed stays dash, bar fits conversation', async () => {
@@ -221,7 +216,7 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
 
     await assertDialogInViewport(dialog)
     await expectFocusInDialog()
-    await assertProviderSection(dialog)
+    await assertProvidersEntry(dialog)
 
     lightAppBg = await page.evaluate(() => getComputedStyle(document.querySelector('.app') as HTMLElement).backgroundColor)
     await page.waitForTimeout(400)
@@ -248,7 +243,7 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
 
     await assertDialogInViewport(dialog)
     await expectFocusInDialog()
-    await assertProviderSection(dialog)
+    await assertProvidersEntry(dialog)
 
     const darkBg = await page.evaluate(() => getComputedStyle(document.querySelector('.app') as HTMLElement).backgroundColor)
     expect(darkBg).not.toBe(lightAppBg)

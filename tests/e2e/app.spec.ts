@@ -592,13 +592,13 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await ensurePanelsOpen()
     await page.waitForTimeout(400) // let grid transition settle
     // Settings first screen (scroll-position assertion; no dedicated
-    // screenshot): with the provider list height-capped, the API Key note
-    // and the defaults section fit in the initial viewport unscrolled.
+    // screenshot): the providers section is entry-only and the defaults
+    // section fits in the initial viewport unscrolled.
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const settingsDialog = page.getByRole('dialog', { name: '设置' })
     await expect(settingsDialog).toBeVisible()
     const viewportHeight = await page.evaluate(() => window.innerHeight)
-    for (const heading of ['API Key（仅本次运行）', '默认设置']) {
+    for (const heading of ['模型提供商', '默认设置']) {
       const box = await page.getByRole('heading', { name: heading, exact: true }).boundingBox()
       expect(box).not.toBeNull()
       expect((box as { y: number; height: number }).y).toBeGreaterThanOrEqual(0)

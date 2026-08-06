@@ -55,23 +55,31 @@ test.describe.serial('extensions (isolated)', () => {
 
   test('seeded extension is loaded: settings lists it with command + handler counts', async () => {
     const info = await page.evaluate(() => window.pi.getExtensions())
-    // hello.js from the agent dir + the built-in inline approval extension.
-    const ext = info.extensions.find((e) => e.path.includes('hello.js'))
-    expect(ext).toBeTruthy()
-    expect(ext!.commandCount).toBe(1)
-    expect(ext!.handlerCount).toBe(1)
+    // Only the user-installed hello.js shows up — built-in inline extensions
+    // (e.g. the tool-approval helper) are filtered out of the list.
+    expect(info.extensions).toHaveLength(1)
+    const ext = info.extensions[0]!
+    expect(ext.path).toContain('hello.js')
+    expect(ext.name).toBe('hello') // display name = file name without suffix
+    expect(ext.sourceLabel).toBe('user')
+    expect(ext.commandCount).toBe(1)
+    expect(ext.handlerCount).toBe(1)
     expect(info.errors).toEqual([])
 
-    // Settings panel: Extensions section shows the extension.
+    // Settings panel: Extensions section shows the extension by its display
+    // name (file name without suffix) + origin, not a raw path.
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
     await expect(dialog.getByRole('heading', { name: '扩展' })).toBeVisible()
-    const extCard = dialog.locator('.sett-extension').filter({ hasText: 'hello.js' })
+    const extCard = dialog.locator('.sett-extension').filter({ hasText: 'hello' })
     await expect(extCard).toHaveCount(1)
-    await expect(extCard).toContainText('hello.js')
+    await expect(extCard).toContainText('hello')
+    await expect(extCard).toContainText('用户扩展')
     await expect(extCard).toContainText('1 命令')
     await expect(extCard).toContainText('1 处理器')
+    // The full path is still reachable as the hover title.
+    await expect(extCard.locator('.sett-extension-name')).toHaveAttribute('title', /hello\.js$/)
     await page.getByRole('button', { name: '关闭设置' }).click()
   })
 

@@ -85,7 +85,12 @@ test.describe.serial('new provider modal + connection test (isolated)', () => {
     await expect(modal.locator('.sett-model-id', { hasText: 'stub-model' })).toBeVisible()
     await modal.getByRole('button', { name: '添加提供商' }).click()
     await expect(modal).not.toBeVisible()
-    await expect(dialog.locator('.sett-provider-name', { hasText: 'Stub Provider' })).toBeVisible()
+    // The new provider lands in models.json and its model becomes selectable
+    // in the chat dialog — the settings page itself lists no providers.
+    const after = await page.evaluate(() => window.pi.getSettings())
+    expect(after.providers.some((p) => p.id === 'stub-provider')).toBe(true)
+    const snap = await page.evaluate(() => window.pi.getSnapshot())
+    expect(snap.models.some((m) => m.provider === 'stub-provider' && m.id === 'stub-model')).toBe(true)
     await page.getByRole('button', { name: '关闭设置' }).click()
   })
 
@@ -100,7 +105,8 @@ test.describe.serial('new provider modal + connection test (isolated)', () => {
     await modal.getByRole('button', { name: '取消' }).click()
     await expect(modal).not.toBeVisible()
     // Nothing was added.
-    await expect(dialog.locator('.sett-provider-name', { hasText: 'ghost' })).toHaveCount(0)
+    const after = await page.evaluate(() => window.pi.getSettings())
+    expect(after.providers.some((p) => p.id === 'ghost')).toBe(false)
     await page.getByRole('button', { name: '关闭设置' }).click()
   })
 })

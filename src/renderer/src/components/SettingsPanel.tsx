@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { LoaderCircle, LogOut, Plus, RefreshCw, RotateCcw, Search, TriangleAlert, X } from 'lucide-react'
+import { LoaderCircle, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
   CustomProviderApi,
@@ -39,7 +39,7 @@ const THINKING_KEYS: { value: ThinkingLevel; labelKey: string }[] = [
 const TIMEOUT_MIN_S = HTTP_IDLE_TIMEOUT_MIN_MS / 1000
 const TIMEOUT_MAX_S = HTTP_IDLE_TIMEOUT_MAX_MS / 1000
 
-type BusyAction = 'key' | 'logout' | 'refresh' | 'save' | 'approval' | 'custom' | null
+type BusyAction = 'refresh' | 'save' | 'approval' | 'custom' | null
 
 interface LiveMessage {
   kind: 'success' | 'error' | 'info'
@@ -65,11 +65,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [phase, setPhase] = useState<'loading' | 'error' | 'ready'>('loading')
   const [loadMessage, setLoadMessage] = useState('')
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
-  const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
-  const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState<BusyAction>(null)
   const [live, setLive] = useState<LiveMessage | null>(null)
-  const [confirmLogout, setConfirmLogout] = useState(false)
   const [approvalStatus, setApprovalStatus] = useState<LiveMessage | null>(null)
 
   // Draft of editable default settings; initialized from the loaded snapshot.
@@ -83,7 +80,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [compaction, setCompaction] = useState(false)
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
-  const [providerQuery, setProviderQuery] = useState('')
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
   // Custom-provider form (adds a provider to the agent's models.json).
   const [customOpen, setCustomOpen] = useState(false)
@@ -93,9 +89,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [customApi, setCustomApi] = useState<CustomProviderApi>('openai-completions')
   const [customApiKey, setCustomApiKey] = useState('')
   /** Models of the new provider, added one by one. */
-  const [customModels, setCustomModels] = useState<{ id: string; name?: string }[]>([])
+  const [customModels, setCustomModels] = useState<{ id: string }[]>([])
   const [modelInput, setModelInput] = useState('')
-  const [modelNameInput, setModelNameInput] = useState('')
   const [customImage, setCustomImage] = useState(false)
   /** Connection-test state for the New-provider modal. */
   const [testResult, setTestResult] = useState<{ testing: boolean } | { testing: false; ok: boolean; status: number | null; kind: 'ok' | 'auth' | 'http' | 'network' }>({ testing: false })
@@ -106,8 +101,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   // is cleared so a later re-render can never re-scroll the sheet.
   const pendingSectionRef = useRef<'approval' | null>(initialSection ?? null)
 
+  // Configured providers shown as a read-only list in the Providers section.
   const providers = settings?.providers ?? []
-  const selected = providers.find((p) => p.id === selectedProvider) ?? null
+  // "Configured" means a credential is present: stored / runtime / env /
+  // fallback / models.json keys count; `none` (no API key) is excluded.
+  const configuredProviders = providers.filter((p) => p.authStatus !== 'none')
   const anyBusy = busy !== null
 
   const load = useCallback(async () => {
@@ -123,7 +121,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setCompaction(s.compactionEnabled)
       setRetry(s.retryEnabled)
       setTimeoutSec(String(Math.round(s.httpIdleTimeoutMs / 1000)))
-      setSelectedProvider((prev) => prev ?? s.providers[0]?.id ?? null)
       setPhase('ready')
     } catch (e) {
       setLoadMessage(errorMessage(e))
@@ -159,16 +156,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     section.querySelector<HTMLElement>('[data-sett-approval-toggle]')?.focus()
   }, [phase])
 
-  // Unmount must never leave a partially-submitted secret behind.
-  useEffect(() => {
-    return () => {
-      setApiKey('')
-    }
-  }, [])
-
-  // Closing clears any typed secret first so it cannot survive the sheet.
   const closeSheet = useCallback((): void => {
-    setApiKey('')
     onClose()
   }, [onClose])
 
@@ -194,52 +182,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     } else if (!e.shiftKey && document.activeElement === last) {
       e.preventDefault()
       first.focus()
-    }
-  }
-
-  const submitKey = async (): Promise<void> => {
-    const key = apiKey.trim()
-    // Capture the target before clearing: even if the user switches provider
-    // mid-flight, the key is never submitted to the wrong provider.
-    const providerId = selectedProvider
-    if (key === '' || providerId === null || anyBusy) return
-    // Clear the secret immediately — success, settings-error and rejection alike.
-    setApiKey('')
-    setBusy('key')
-    setLive({ kind: 'info', text: t('settings.keySetting') })
-    setConfirmLogout(false)
-    try {
-      const s = await window.pi.setRuntimeApiKey(providerId, key)
-      setSettings(s)
-      if (s.error !== null) {
-        setLive({ kind: 'error', text: s.error.message })
-      } else {
-        setLive({ kind: 'success', text: t('settings.keySuccess') })
-      }
-    } catch (e) {
-      setLive({ kind: 'error', text: errorMessage(e) })
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const logout = async (): Promise<void> => {
-    if (selectedProvider === null || anyBusy) return
-    if (!confirmLogout) {
-      setConfirmLogout(true)
-      return
-    }
-    setBusy('logout')
-    setLive({ kind: 'info', text: t('settings.loggingOut') })
-    try {
-      const s = await window.pi.logoutProvider(selectedProvider)
-      setSettings(s)
-      setConfirmLogout(false)
-      setLive(s.error !== null ? { kind: 'error', text: s.error.message } : { kind: 'success', text: t('settings.loggedOut') })
-    } catch (e) {
-      setLive({ kind: 'error', text: errorMessage(e) })
-    } finally {
-      setBusy(null)
     }
   }
 
@@ -290,10 +232,9 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setLive({ kind: 'error', text: t('settings.duplicateModel') })
       return
     }
-    const name = modelNameInput.trim()
-    setCustomModels((prev) => [...prev, { id, ...(name !== '' ? { name } : {}) }])
+    // cc-switch style: Enter or the button turns the typed ID into a chip.
+    setCustomModels((prev) => [...prev, { id }])
     setModelInput('')
-    setModelNameInput('')
     setLive(null)
   }
 
@@ -365,11 +306,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         setCustomApiKey('')
         setCustomModels([])
         setModelInput('')
-        setModelNameInput('')
         setCustomImage(false)
         setTestResult({ testing: false })
-        // Select the new provider so its panel is ready for a runtime key.
-        setSelectedProvider((prev) => prev ?? id)
       }
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
@@ -459,26 +397,22 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     }
   }
 
-  // Provider options: providers seen in the model catalog first, then any
-  // known providers from settings. Model options are filtered from
-  // AppSnapshot.models by the chosen default provider.
-  const providerOptions = useMemo(() => {
-    const seen = new Set<string>()
-    const out: { value: string; label: string }[] = []
-    const push = (id: string): void => {
-      if (seen.has(id)) return
-      seen.add(id)
-      const info = providers.find((p) => p.id === id)
-      out.push({ value: id, label: info ? info.name : id })
-    }
-    for (const m of snapshot.models) push(m.provider)
-    for (const p of providers) push(p.id)
-    return out
-  }, [snapshot.models, providers])
-
+  // The default model carries its provider (same as the topbar selector), so
+  // the Defaults section has a single picker instead of provider + model.
   const modelOptions = useMemo(
-    () => snapshot.models.filter((m) => m.provider === defaultProvider).map((m) => ({ value: m.id, label: m.name || m.id })),
-    [snapshot.models, defaultProvider],
+    () =>
+      snapshot.models.map((m) => ({
+        value: `${m.provider}:${m.id}`,
+        label: `${m.provider} · ${m.name || m.id}`,
+        provider: m.provider,
+        id: m.id,
+      })),
+    [snapshot.models],
+  )
+  // The currently selected option value, or '' for "follow last".
+  const currentModelValue = useMemo(
+    () => modelOptions.find((o) => o.provider === defaultProvider && o.id === defaultModel)?.value ?? '',
+    [modelOptions, defaultProvider, defaultModel],
   )
 
   // The save patch is a diff against the persisted baseline: only changed,
@@ -496,69 +430,33 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     if (Number.isFinite(sec) && Math.round(sec) * 1000 !== baseline.httpIdleTimeoutMs) {
       p.httpIdleTimeoutMs = Math.round(sec) * 1000
     }
-    if (
-      defaultProvider !== null &&
-      defaultProvider !== baseline.defaultProvider &&
-      providerOptions.some((o) => o.value === defaultProvider)
-    ) {
-      p.defaultProvider = defaultProvider
-    }
-    if (
-      defaultModel !== null &&
-      defaultProvider !== null &&
-      defaultModel !== baseline.defaultModel &&
-      modelOptions.some((o) => o.value === defaultModel)
-    ) {
-      p.defaultModel = defaultModel
+    // A picked default model always saves a valid provider+model pair; the
+    // empty "follow last" option clears the draft and sends neither.
+    if (defaultModel !== null && defaultModel !== baseline.defaultModel) {
+      const opt = modelOptions.find((o) => o.provider === defaultProvider && o.id === defaultModel)
+      if (opt !== undefined) {
+        p.defaultModel = defaultModel
+        if (opt.provider !== baseline.defaultProvider) p.defaultProvider = opt.provider
+      }
     }
     return p
-  }, [baseline, thinking, compaction, retry, timeoutSec, defaultProvider, defaultModel, providerOptions, modelOptions])
+  }, [baseline, thinking, compaction, retry, timeoutSec, defaultProvider, defaultModel, modelOptions])
 
-  const filteredProviders = useMemo(() => {
-    const q = providerQuery.trim().toLowerCase()
-    if (q === '') return providers
-    return providers.filter((p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
-  }, [providers, providerQuery])
-
-  // The selected provider is always reachable: when the search filters it
-  // out, it is pinned above the (possibly empty) result list.
-  const selectedPinned = selected !== null && !filteredProviders.includes(selected)
   const dirty = Object.keys(patch).length > 0
   // Current approval policy: the settings snapshot returned by main (never an
   // optimistic local flip). While settings are still loading the switch is
   // simply not rendered, and the TopBar badge keeps using the AppSnapshot.
   const approvalMode: ToolApprovalMode = settings?.toolApprovalMode ?? snapshot.toolApprovalMode
 
-  const renderProviderButton = (p: ProviderStatus) => {
-    const active = p.id === selectedProvider
-    const isDefault = p.id === settings?.defaultProvider
-    return (
-      <button
-        key={p.id}
-        type="button"
-        className={`sett-provider${active ? ' sett-provider-active' : ''}`}
-        aria-pressed={active}
-        onClick={() => {
-          // A key typed for one provider must never carry over to another.
-          setApiKey('')
-          setSelectedProvider(p.id)
-          setConfirmLogout(false)
-        }}
-      >
-        <span className="sett-provider-name">{p.name}</span>
-        <span className="sett-provider-id">{p.id}</span>
-        <span className="sett-provider-meta">
-          <span className={`sett-auth sett-auth-${p.authStatus}`}>{t(AUTH_KEYS[p.authStatus])}</span>
-          <span>{t('settings.models', { n: p.availableModelCount })}</span>
-          {p.credentialType !== null ? <span>{p.credentialType}</span> : null}
-          {isDefault ? <span className="sett-provider-default">{t('common.default')}</span> : null}
-        </span>
-      </button>
-    )
-  }
-
   return (
-    <div className="sett-overlay">
+    // Clicking the backdrop (outside the sheet) closes the settings; clicks
+    // inside the sheet — or inside the nested New-provider modal — never do.
+    <div
+      className="sett-overlay"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) closeSheet()
+      }}
+    >
       <section
         className="sett-sheet"
         role="dialog"
@@ -649,99 +547,31 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </button>
                 </div>
                 <p className="sett-hint">{t('settings.providersHint')}</p>
-                {providers.length === 0 ? (
-                  <div className="sett-empty">
-                    <p>{t('settings.noProviders')}</p>
-                    <p className="sett-empty-hint">
-                      {t('settings.noProvidersHint')}
-                    </p>
-                    <button type="button" className="btn" onClick={() => void refresh()} disabled={anyBusy}>
-                      <RefreshCw size={13} aria-hidden="true" />
-                      {busy === 'refresh' ? t('settings.refreshing') : t('settings.refreshModels')}
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="sett-provider-search">
-                      <Search size={13} className="sett-provider-search-icon" aria-hidden="true" />
-                      <input
-                        type="search"
-                        className="sett-provider-search-input"
-                        placeholder={t('settings.searchProvider')}
-                        aria-label={t('settings.searchAria')}
-                        value={providerQuery}
-                        onChange={(e) => setProviderQuery(e.target.value)}
-                      />
-                    </div>
-                    {selectedPinned && selected !== null ? (
-                      <div className="sett-provider-pinned">
-                        <p className="sett-pinned-label">{t('settings.pinnedLabel')}</p>
-                        {renderProviderButton(selected)}
-                      </div>
-                    ) : null}
-                    {filteredProviders.length === 0 ? (
-                      <p className="sett-search-empty">{t('settings.searchEmpty')}</p>
-                    ) : (
-                      <div className="sett-provider-list">{filteredProviders.map((p) => renderProviderButton(p))}</div>
-                    )}
-                  </>
-                )}
-
-                {/* Provider action panel: sits right under the list so the
-                    choose-then-configure flow reads top-to-bottom. */}
-                <div className="sett-provider-panel" aria-labelledby="sett-key-title">
-                  <div className="sett-provider-panel-head">
-                    <h3 id="sett-key-title">{t('settings.keyTitle')}</h3>
-                    {selected !== null ? (
-                      <span className={`sett-auth sett-auth-${selected.authStatus}`}>{t(AUTH_KEYS[selected.authStatus])}</span>
-                    ) : null}
-                  </div>
-                  {selected === null ? (
-                    <p className="sett-hint">{t('settings.selectProviderFirst')}</p>
-                  ) : (
-                    <>
-                      <p className="sett-hint">{t('settings.keyHint', { name: selected.name })}</p>
-                      <div className="sett-key-row">
-                        <input
-                          type="password"
-                          className="sett-input"
-                          autoComplete="new-password"
-                          placeholder={t('settings.keyPlaceholder')}
-                          aria-label="API Key"
-                          value={apiKey}
-                          disabled={anyBusy}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') void submitKey()
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          disabled={anyBusy || apiKey.trim() === ''}
-                          onClick={() => void submitKey()}
-                        >
-                          {busy === 'key' ? t('settings.settingKey') : t('settings.setKey')}
-                        </button>
-                      </div>
-                      <div className="sett-key-actions">
-                        <button type="button" className="btn" disabled={anyBusy} onClick={() => void refresh()}>
-                          <RefreshCw size={13} aria-hidden="true" />
-                          {busy === 'refresh' ? t('settings.refreshing') : t('settings.refreshModels')}
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn${confirmLogout ? ' btn-danger' : ''}`}
-                          disabled={anyBusy}
-                          onClick={() => void logout()}
-                        >
-                          <LogOut size={13} aria-hidden="true" />
-                          {confirmLogout ? t('settings.confirmLogout') : t('settings.logout')}
-                        </button>
-                      </div>
-                    </>
-                  )}
+                <div className="sett-provider-actions">
+                  <button type="button" className="btn" disabled={anyBusy} onClick={() => void refresh()}>
+                    <RefreshCw size={13} aria-hidden="true" />
+                    {busy === 'refresh' ? t('settings.refreshing') : t('settings.refreshModels')}
+                  </button>
                 </div>
+                {configuredProviders.length > 0 ? (
+                  <>
+                    <h4 className="sett-subtitle">{t('settings.providersConfigured')}</h4>
+                    <div className="sett-provider-list">
+                      {configuredProviders.map((p) => (
+                        <div className="sett-provider-card" key={p.id}>
+                          <div className="sett-provider-card-line">
+                            <span className="sett-provider-card-name" title={p.id}>{p.name}</span>
+                            <span className={`rp-auth rp-auth-${p.authStatus}`}>{t(AUTH_KEYS[p.authStatus])}</span>
+                          </div>
+                          <div className="sett-provider-card-sub">
+                            <code>{p.id}</code>
+                            <span>{t('settings.models', { n: p.availableModelCount })}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
               </section>
 
               <section className="sett-section" aria-labelledby="sett-extensions-title">
@@ -779,9 +609,12 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   <div className="sett-extension-list">
                     {extensionsInfo.extensions.map((extension) => (
                       <div className="sett-extension" key={extension.resolvedPath}>
-                        <span className="sett-extension-path" title={extension.path}>
-                          {extension.path}
-                        </span>
+                        <div className="sett-extension-main">
+                          <span className="sett-extension-name" title={extension.path}>
+                            {extension.name}
+                          </span>
+                          <span className="sett-extension-source">{t(`settings.extensionsSource.${extension.sourceLabel}`)}</span>
+                        </div>
                         <span className="sett-extension-meta">
                           <span>{t('settings.extensionsCommands', { n: extension.commandCount })}</span>
                           <span>{t('settings.extensionsTools', { n: extension.toolCount })}</span>
@@ -807,48 +640,35 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                 <h3 id="sett-defaults-title">{t('settings.defaults')}</h3>
                 <p className="sett-hint">{t('settings.defaultsHint')}</p>
                 <div className="sett-field">
-                  <label htmlFor="sett-provider">{t('settings.defaultProvider')}</label>
-                  <select
-                    id="sett-provider"
-                    className="sett-select"
-                    value={providerOptions.some((o) => o.value === defaultProvider) ? (defaultProvider ?? '') : ''}
-                    disabled={providerOptions.length === 0 || anyBusy}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      setDefaultProvider(v === '' ? null : v)
-                      setDefaultModel(null)
-                    }}
-                  >
-                    <option value="">{t('settings.followLast')}</option>
-                    {providerOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  {providerOptions.length === 0 ? (
-                    <span className="sett-field-hint">{t('settings.noModelsHint')}</span>
-                  ) : null}
-                </div>
-                <div className="sett-field">
                   <label htmlFor="sett-model">{t('settings.defaultModel')}</label>
                   <select
                     id="sett-model"
                     className="sett-select"
-                    value={modelOptions.some((o) => o.value === defaultModel) ? (defaultModel ?? '') : ''}
-                    disabled={defaultProvider === null || modelOptions.length === 0 || anyBusy}
+                    value={currentModelValue}
+                    disabled={modelOptions.length === 0 || anyBusy}
                     onChange={(e) => {
                       const v = e.target.value
-                      setDefaultModel(v === '' ? null : v)
+                      if (v === '') {
+                        setDefaultProvider(null)
+                        setDefaultModel(null)
+                        return
+                      }
+                      const opt = modelOptions.find((o) => o.value === v)
+                      if (opt === undefined) return
+                      setDefaultProvider(opt.provider)
+                      setDefaultModel(opt.id)
                     }}
                   >
-                    <option value="">{t('settings.providerDefault')}</option>
+                    <option value="">{t('settings.followLast')}</option>
                     {modelOptions.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
                     ))}
                   </select>
+                  {modelOptions.length === 0 ? (
+                    <span className="sett-field-hint">{t('settings.noModelsHint')}</span>
+                  ) : null}
                 </div>
                 <div className="sett-field">
                   <label htmlFor="sett-thinking">{t('settings.defaultThinking')}</label>
@@ -1091,7 +911,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     {customModels.map((model) => (
                       <div className="sett-model-row" key={model.id}>
                         <span className="sett-model-id">{model.id}</span>
-                        {model.name !== undefined ? <span className="sett-model-name">{model.name}</span> : null}
                         <button
                           type="button"
                           className="btn-icon"
@@ -1099,7 +918,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                           title={t('settings.removeModel')}
                           onClick={() => setCustomModels((prev) => prev.filter((m) => m.id !== model.id))}
                         >
-                          <X size={12} aria-hidden="true" />
+                          <X size={11} aria-hidden="true" />
                         </button>
                       </div>
                     ))}
@@ -1113,20 +932,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     value={modelInput}
                     disabled={anyBusy}
                     onChange={(e) => setModelInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        addModel()
-                      }
-                    }}
-                  />
-                  <input
-                    className="sett-input"
-                    placeholder={t('settings.modelNamePh')}
-                    aria-label={t('settings.modelNamePh')}
-                    value={modelNameInput}
-                    disabled={anyBusy}
-                    onChange={(e) => setModelNameInput(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         e.preventDefault()

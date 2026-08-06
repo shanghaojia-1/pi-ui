@@ -204,7 +204,10 @@ export interface DynamicCommand {
 export interface ExtensionInfo {
   path: string
   resolvedPath: string
-  sourceLabel: string
+  /** Card title: package name for npm/git extensions, file name for standalone ones. */
+  name: string
+  /** Extension origin scope: user, project or built-in. */
+  sourceLabel: 'user' | 'project' | 'temporary'
   commandCount: number
   toolCount: number
   handlerCount: number
