@@ -2,7 +2,11 @@ import { _electron, expect, test, type ElectronApplication, type Page } from '@p
 import { createServer, type Server } from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const PROJECT_ROOT = resolve(HERE, '../..')
 
 test.describe.serial('new provider modal + connection test (isolated)', () => {
   let app: ElectronApplication
@@ -35,9 +39,11 @@ test.describe.serial('new provider modal + connection test (isolated)', () => {
     tempWorkspace = join(tempRoot, 'workspace')
     for (const dir of [tempHome, tempAgent, tempWorkspace]) mkdirSync(dir)
     writeFileSync(join(tempWorkspace, 'README.md'), '# modal\n')
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const tempUserData = join(tempRoot, 'user-data')
+    mkdirSync(tempUserData)
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
-    app = await _electron.launch({ args: ['/home/shj/桌面/pi-ui'], cwd: tempWorkspace, env })
+    app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
   })
@@ -77,6 +83,9 @@ test.describe.serial('new provider modal + connection test (isolated)', () => {
     // Fill the rest and add the provider: modal closes, provider appears.
     await modal.locator('#custom-id').fill('stub-provider')
     await modal.locator('#custom-name').fill('Stub Provider')
+    // Custom providers only surface models once auth is configured; the stub
+    // server accepts any key, so a dummy one is fine here.
+    await modal.locator('#custom-key').fill('sk-stub')
     // Models are added one by one via the model row.
     await modal.getByLabel('模型 ID').fill('stub-model')
     await modal.getByRole('button', { name: '添加模型' }).click()

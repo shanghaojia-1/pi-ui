@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { ArrowUp, ImagePlus, Square, X } from 'lucide-react'
 import { MAX_ATTACHED_IMAGE_BYTES, MAX_ATTACHED_IMAGES, type DynamicCommand, type ImageAttachment } from '@shared/contracts'
 import ImageLightbox from './Lightbox'
+import { shortcut } from '../lib/shortcuts'
 import { useI18n } from '../lib/i18n'
 
 export interface ComposerHandle {
@@ -428,7 +429,7 @@ const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
       ) : null}
       {imageError !== null ? <div className="composer-error">{imageError}</div> : null}
       <div className="composer-hint">
-        {running ? t('composer.hint.running') : t('composer.hint.idle')}
+        {running ? t('composer.hint.running') : t('composer.hint.idle', { kbd: shortcut('⌘K', 'Ctrl+K') })}
       </div>
     </div>
   )

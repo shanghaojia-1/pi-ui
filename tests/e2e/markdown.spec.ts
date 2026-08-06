@@ -140,14 +140,18 @@ test.describe.serial('Markdown rendering from a seeded session (isolated, no LLM
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E markdown workspace\n')
     wsReal = realpathSync(tempWorkspace)
 
-    // The app keys session dirs as '--' + cwd (leading '/' stripped, '/' -> '-') + '--'
-    // (name observed from the dir the app itself creates for an empty agent dir).
-    const encodedDir = '--' + wsReal.replace(/^\/+/, '').replace(/\//g, '-') + '--'
+    // The app keys session dirs as '--' + cwd (leading separator stripped,
+    // every separator and the drive colon collapsed into '-') + '--' — mirror
+    // the SDK encoder exactly so the seeded session lands in the right dir on
+    // every platform (\ and : matter on Windows).
+    const encodedDir = '--' + wsReal.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-') + '--'
     const dir = join(tempAgent, 'sessions', encodedDir)
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, SESSION_ID + '.jsonl'), seedJsonl(wsReal))
 
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const tempUserData = join(tempRoot, 'user-data')
+    mkdirSync(tempUserData)
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({
       args: [PROJECT_ROOT],
@@ -171,7 +175,10 @@ test.describe.serial('Markdown rendering from a seeded session (isolated, no LLM
   async function resizeTo(width: number): Promise<number> {
     await app.evaluate(({ BrowserWindow }, w) => {
       const win = BrowserWindow.getAllWindows()[0]
-      if (win) win.setSize(w, 800)
+      // setContentSize (not setSize) so the web content area is exactly the
+      // requested width on every platform (Windows frames + DPI would shave
+      // a few px off innerWidth otherwise).
+      if (win) win.setContentSize(w, 800)
     }, width)
     await page.waitForTimeout(500)
     return page.evaluate(() => window.innerWidth)

@@ -12,6 +12,13 @@ let mainWindow: BrowserWindow | null = null
 /** Persisted tool-approval policy; loaded before runtime.initialize and injected into the runtime. */
 let managedModeStore: ManagedModeStore | null = null
 
+// Test isolation: e2e suites redirect the persisted user-data dir (managed
+// mode, window state, localStorage) so a developer's real profile never
+// leaks into a sandboxed run. Must run before whenReady / BrowserWindow.
+if (process.env.PI_STUDIO_USER_DATA) {
+  app.setPath('userData', process.env.PI_STUDIO_USER_DATA)
+}
+
 /**
  * Reusable trusted-sender gate for settings/sensitive write IPC: only the
  * main window's own (non-destroyed) webContents may submit. Any other sender

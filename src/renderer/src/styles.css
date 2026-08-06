@@ -287,12 +287,32 @@ summary,
   background: var(--bg);
   border-right: 1px solid var(--border);
 }
+/* Sidebar children use width:100% together with padding/border; content-box
+   sizing makes them overflow the column (horizontal scrollbar, delete button
+   sliding under the vertical scrollbar). Border-box keeps every child inside
+   the 248px column. */
+.sidebar,
+.sidebar *,
+.sidebar *::before,
+.sidebar *::after {
+  box-sizing: border-box;
+}
 
 .main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   background: var(--bg-panel);
+}
+
+/* Centered columns (message list, banners, composer) combine width:100% /
+   max-width with horizontal padding; content-box sizing would widen them by
+   the padding (48px) and overflow the column, forcing a horizontal scrollbar
+   in .messages. Border-box keeps every centered surface inside the column. */
+.msg,
+.banner-zone,
+.composer-wrap {
+  box-sizing: border-box;
 }
 
 .conversation {
@@ -382,12 +402,14 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  height: 44px;
-  padding: 0 10px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 44px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex: none;
+  box-sizing: border-box;
   overflow: visible;
 }
 .topbar-left,
@@ -396,6 +418,22 @@ kbd {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+/* When the topbar wraps (narrow center column) the actions row sits on its
+   own line, pushed to the trailing edge instead of hugging the left. */
+.topbar-right {
+  margin-left: auto;
+  /* Keep the pickers clear of the absolutely-positioned panel toggle. */
+  padding-right: 36px;
+}
+/* The right-panel toggle is absolutely pinned to the top-right corner of the
+   bar: on one line it sits beside the actions row at the far right; when the
+   pickers wrap to a second line it stays on the FIRST row, so the panel can
+   always be reopened without hunting for it. */
+.topbar-panel-btn {
+  position: absolute;
+  right: 10px;
+  top: 6px;
 }
 .topbar-right .select-trigger {
   height: 28px;
@@ -514,6 +552,18 @@ kbd {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* Inline widths (TopBar passes 210/104) lose to the flex column on narrow
+   windows: let the pickers size to their content and shrink when needed
+   (the trigger/value already ellipsize), so the wrapped topbar never spills. */
+@media (max-width: 1180px) {
+  .topbar .select {
+    width: auto !important;
+    flex: 0 1 auto;
+    min-width: 88px;
+    max-width: 210px;
   }
 }
 
@@ -670,6 +720,9 @@ li[aria-selected='true'] > .select-item {
 .sidebar-sessions {
   flex: 1;
   overflow-y: auto;
+  /* Never a horizontal scrollbar: overflow-x must not become `auto` just
+     because overflow-y is set. */
+  overflow-x: hidden;
   padding: 8px 6px 12px;
 }
 .sidebar-footer {
@@ -805,6 +858,25 @@ li[aria-selected='true'] > .select-item {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.session-ws {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.session-ws-icon {
+  flex: none;
+}
+.session-ws-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-item-active .session-ws {
+  color: var(--accent);
+}
 .session-meta {
   font-size: 10.5px;
   color: var(--text-3);
@@ -815,6 +887,9 @@ li[aria-selected='true'] > .select-item {
 .messages {
   flex: 1;
   overflow-y: auto;
+  /* Never a horizontal scrollbar: overflow-x must not become `auto` just
+     because overflow-y is set. */
+  overflow-x: hidden;
   padding: 18px 0 12px;
   scroll-behavior: smooth;
 }
@@ -1955,6 +2030,7 @@ html[data-theme='mikami-yua'] .msg-avatar-assistant .msg-avatar-pi {
   font-size: 11px;
   color: var(--text-2);
   flex: none;
+  min-width: 0;
 }
 .status-dot {
   width: 6px;
@@ -1982,6 +2058,7 @@ html[data-theme='mikami-yua'] .msg-avatar-assistant .msg-avatar-pi {
   gap: 12px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  min-width: 0;
 }
 .status-version {
   border: 0;
@@ -1992,6 +2069,7 @@ html[data-theme='mikami-yua'] .msg-avatar-assistant .msg-avatar-pi {
   cursor: pointer;
   padding: 0 2px;
   font-family: var(--font-mono);
+  flex: none;
 }
 .status-version:hover {
   color: var(--accent);
@@ -1999,6 +2077,12 @@ html[data-theme='mikami-yua'] .msg-avatar-assistant .msg-avatar-pi {
 }
 .status-queue {
   color: var(--amber);
+  flex: none;
+}
+.status-usage {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ============ right panel ============ */

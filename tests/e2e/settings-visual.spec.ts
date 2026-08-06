@@ -76,12 +76,14 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
     wsReal = realpathSync(tempWorkspace)
 
     // Session dir keyed by realpath cwd, exactly like the markdown spec's helper.
-    const encodedDir = '--' + wsReal.replace(/^\/+/, '').replace(/\//g, '-') + '--'
+    const encodedDir = '--' + wsReal.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-') + '--'
     const dir = join(tempAgent, 'sessions', encodedDir)
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, SESSION_ID + '.jsonl'), seedJsonl(wsReal))
 
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const tempUserData = join(tempRoot, 'user-data')
+    mkdirSync(tempUserData)
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({
       args: [PROJECT_ROOT],

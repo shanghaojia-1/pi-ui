@@ -22,6 +22,8 @@ export interface SessionListItem {
   preview: string
   modifiedAt: string
   messageCount: number
+  /** Working directory this session belongs to; may differ from the active workspace. */
+  workspace: WorkspaceInfo | null
 }
 export interface ModelInfo {
   provider: string

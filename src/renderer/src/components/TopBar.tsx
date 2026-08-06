@@ -100,15 +100,6 @@ export default function TopBar({
       </div>
 
       <div className="topbar-right">
-        <button
-          type="button"
-          className="btn-icon"
-          onClick={onToggleRight}
-          aria-label={rightOpen ? t('topbar.collapsePanel') : t('topbar.expandPanel')}
-          aria-pressed={rightOpen}
-        >
-          <PanelRight size={15} aria-hidden="true" />
-        </button>
         <Select
           label={t('topbar.thinkingLabel')}
           value={snapshot?.thinkingLevel ?? 'medium'}
@@ -152,6 +143,19 @@ export default function TopBar({
           <span className="approval-label">{approvalMode === 'managed' ? t('topbar.approval.managed') : t('topbar.approval.ask')}</span>
         </button>
       </div>
+      {/* The right-panel toggle stays a sibling of .topbar-right (not inside
+          it): flex-wrap keeps it on the first row at the far right even when
+          the pickers wrap to a second line, so the panel can always be
+          reopened without hunting for it. */}
+      <button
+        type="button"
+        className="btn-icon topbar-panel-btn"
+        onClick={onToggleRight}
+        aria-label={rightOpen ? t('topbar.collapsePanel') : t('topbar.expandPanel')}
+        aria-pressed={rightOpen}
+      >
+        <PanelRight size={15} aria-hidden="true" />
+      </button>
     </header>
   )
 }

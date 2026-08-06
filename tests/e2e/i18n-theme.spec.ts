@@ -1,7 +1,11 @@
 import { _electron, expect, test, type Page } from '@playwright/test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const PROJECT_ROOT = resolve(HERE, '../..')
 
 test.describe.serial('i18n + themes (isolated)', () => {
   let app: import('@playwright/test').ElectronApplication
@@ -17,9 +21,11 @@ test.describe.serial('i18n + themes (isolated)', () => {
     tempWorkspace = join(tempRoot, 'workspace')
     for (const dir of [tempHome, tempAgent, tempWorkspace]) mkdirSync(dir)
     writeFileSync(join(tempWorkspace, 'README.md'), '# i18n\n')
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'en' } as Record<string, string>
+    const tempUserData = join(tempRoot, 'user-data')
+    mkdirSync(tempUserData)
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'en', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
-    app = await _electron.launch({ args: [process.cwd()], cwd: tempWorkspace, env })
+    app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
   })

@@ -12,6 +12,7 @@ import {
   type AgentSessionEvent,
   type ExtensionError,
   type InlineExtension,
+  type SessionInfo,
 } from '@earendil-works/pi-coding-agent'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
@@ -27,6 +28,26 @@ const textOf = (content: unknown): string => {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content.map((part) => RECORD(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : '').join('')
+}
+
+/**
+ * Best-effort decode of a session directory name back to a filesystem path,
+ * e.g. `--C--Users-10010026--` → `C:\Users\10010026`. The encoder collapses
+ * every separator (and the drive colon) into `-` and strips the leading
+ * separator, so paths containing literal `-` are ambiguous — this is a
+ * display-only fallback for legacy sessions whose JSONL header carries no
+ * cwd.
+ */
+const decodeSessionDirName = (name: string): string | null => {
+  if (!name.startsWith('--') || !name.endsWith('--')) return null
+  const inner = name.slice(2, -2)
+  if (inner.length === 0) return null
+  const drive = inner.match(/^([A-Za-z])-/)
+  const separator = process.platform === 'win32' ? '\\' : '/'
+  const restored = drive ? `${drive[1]}:${inner.slice(2)}` : inner
+  const decoded = restored.replace(/-/g, separator)
+  // The encoder strips the leading separator; restore it for POSIX paths.
+  return drive || process.platform === 'win32' ? decoded : `/${decoded}`
 }
 
 /**
@@ -390,16 +411,26 @@ export class PiRuntime {
     }).then(() => this.snapshot())
   }
 
-  private async setWorkspace(path: string): Promise<void> {
+  private async setWorkspace(path: string, opts: { restore?: boolean } = {}): Promise<void> {
     const fullPath = await this.validateWorkspacePath(path)
     this.workspace = { path: fullPath, name: basename(fullPath) || fullPath }
     this.skippedRestore = false
     await this.disposeSession()
     await this.reloadModels()
     await this.refreshSessions()
-    // Restore the most recent persisted session (list is sorted by modifiedAt desc)
-    // through the exact same verified-open protocol as openSession.
-    const first = this.sessions[0]
+    if (opts.restore === false) {
+      // Caller (cross-workspace openSession) opens a specific session next;
+      // restoring the most recent one first would churn the session twice.
+      await this.createSession(SessionManager.create(fullPath))
+      return
+    }
+    // Restore the most recent persisted session OF THIS workspace through the
+    // exact same verified-open protocol as openSession. The sidebar list spans
+    // every workspace now, so the newest entry is not necessarily local.
+    const canonical = canonicalizeEvenIfMissing(fullPath)
+    const first = this.sessions.find(
+      (item) => item.workspace !== null && canonicalizeEvenIfMissing(item.workspace.path) === canonical,
+    )
     if (first) {
       await this.openVerifiedSession(first.path, true)
       return
@@ -624,6 +655,16 @@ export class PiRuntime {
         if (!this.workspace) throw new Error('Choose a workspace first')
         // The active empty session has no JSONL on disk yet; opening it is a no-op.
         if (path === this.activePath()) return
+        const canonical = this.verifySessionPath(path)
+        // The session may belong to a DIFFERENT workspace: switch the working
+        // directory first so it opens in its own workspace (the sidebar is a
+        // cross-directory history, so this is the common case for foreign
+        // sessions). setWorkspace skips its auto-restore — the requested
+        // session is opened right below.
+        const item = this.sessions.find((s) => canonicalizeEvenIfMissing(s.path) === canonical)
+        if (item?.workspace && canonicalizeEvenIfMissing(item.workspace.path) !== canonicalizeEvenIfMissing(this.workspace.path)) {
+          await this.setWorkspace(item.workspace.path, { restore: false })
+        }
         await this.openVerifiedSession(path, false)
       } catch (error) { this.recordError('Failed to open session', error) }
     }).then(() => this.snapshot())
@@ -657,8 +698,10 @@ export class PiRuntime {
 
   /**
    * Verifies that `path` is a regular, non-symlink file whose canonical path is
-   * both listed in the sessions allowlist and inside the workspace's canonical
-   * session directory. Returns the canonical path.
+   * both listed in the sessions allowlist and inside the agent's GLOBAL
+   * sessions root (`~/.pi/agent/sessions/<encoded-cwd>/`). Sessions from any
+   * workspace are allowed — the allowlist is cross-directory now — but nothing
+   * outside the sessions root can ever be opened or deleted.
    */
   private verifySessionPath(path: string): string {
     const workspace = this.workspace
@@ -669,8 +712,8 @@ export class PiRuntime {
     const canonical = canonicalizeEvenIfMissing(target)
     const allowed = this.sessions.some((item) => canonicalizeEvenIfMissing(resolve(item.path)) === canonical)
     if (!allowed) throw new Error('Session does not belong to this workspace')
-    const sessionDir = canonicalizeEvenIfMissing(SessionManager.create(workspace.path).getSessionDir())
-    if (!this.isInside(canonical, sessionDir)) throw new Error('Session does not belong to this workspace')
+    const sessionsRoot = canonicalizeEvenIfMissing(join(getAgentDir(), 'sessions'))
+    if (!this.isInside(canonical, sessionsRoot)) throw new Error('Session does not belong to this workspace')
     return canonical
   }
 
@@ -1779,6 +1822,9 @@ export class PiRuntime {
         }
       }
     }
+    if (typeof message.errorMessage === 'string' && message.errorMessage.trim() !== '') {
+      blocks.push({ type: 'text', text: message.errorMessage })
+    }
     return { id, role: 'assistant', blocks, ...(timestamp ? { timestamp } : {}), isStreaming }
   }
 
@@ -2319,10 +2365,25 @@ export class PiRuntime {
     this.models = available.map((model) => ({ provider: model.provider, id: model.id, name: model.name || model.id, ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}) }))
   }
 
+  /**
+   * Workspace a session belongs to: its header cwd when present, otherwise a
+   * best-effort decode of its session directory name (legacy sessions). The
+   * result may differ from the currently active workspace.
+   */
+  private workspaceOf(session: SessionInfo): WorkspaceInfo | null {
+    const cwd = typeof session.cwd === 'string' && session.cwd !== '' ? session.cwd : null
+    const path = cwd ?? decodeSessionDirName(basename(dirname(session.path)))
+    if (!path) return null
+    return { path, name: basename(path) || path }
+  }
+
   private async refreshSessions(): Promise<void> {
     const myEpoch = this.epoch
     if (!this.workspace) return
-    const sessions = await SessionManager.list(this.workspace.path)
+    // List sessions across EVERY workspace directory (~/.pi/agent/sessions/*)
+    // so the sidebar is a unified cross-directory history; each entry carries
+    // its own workspace for display and cross-workspace switching.
+    const sessions = await SessionManager.listAll()
     if (myEpoch !== this.epoch) return // a workspace switch happened while listing
     this.sessions = sessions.map((item) => ({
       id: item.id,
@@ -2331,6 +2392,7 @@ export class PiRuntime {
       preview: item.firstMessage || 'No messages yet',
       modifiedAt: item.modified.toISOString(),
       messageCount: item.messageCount,
+      workspace: this.workspaceOf(item),
     }))
     this.emit()
   }
@@ -2348,9 +2410,11 @@ export class PiRuntime {
   private withActiveSession(sessions: SessionListItem[], activePath: string | null): SessionListItem[] {
     if (!this.session || !activePath) return sessions
     if (sessions.some((item) => item.path === activePath)) return sessions
+    const workspace = this.workspace
     return [{
       id: this.session.sessionId, path: activePath, title: this.sessionNameOverrides.get(canonicalizeEvenIfMissing(activePath)) ?? 'New session',
       preview: 'No messages yet', modifiedAt: new Date().toISOString(), messageCount: 0,
+      workspace: workspace ? { path: workspace.path, name: workspace.name } : null,
     }, ...sessions]
   }
 

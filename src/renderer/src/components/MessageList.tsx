@@ -4,6 +4,7 @@ import type { ChatMessage, ImageBlock, TextBlock } from '@shared/contracts'
 import ToolCall from './ToolCall'
 import Markdown from './Markdown'
 import ImageLightbox from './Lightbox'
+import { shortcut } from '../lib/shortcuts'
 import { useI18n } from '../lib/i18n'
 import { getThemeDefinition, useTheme } from '../lib/theme'
 
@@ -223,7 +224,13 @@ export default function MessageList({ messages, pendingText, workspaceName, onSu
             </button>
           ))}
         </div>
-        <div className="welcome-shortcuts">{t('messages.welcome.shortcuts')}</div>
+        <div className="welcome-shortcuts">
+          {t('messages.welcome.shortcuts', {
+            kbdN: shortcut('⌘N', 'Ctrl+N'),
+            kbdK: shortcut('⌘K', 'Ctrl+K'),
+            kbdO: shortcut('⇧⌘O', 'Ctrl+Shift+O'),
+          })}
+        </div>
       </div>
     )
   }
