@@ -3,8 +3,10 @@ import dongbeiYujieAvatar from '../assets/dongbei-yujie-avatar.png'
 import dongbeiYujieArtwork from '../assets/dongbei-yujie-theme.png'
 import hashimotoYunaAvatar from '../assets/hashimoto-yuna-avatar.png'
 import hashimotoYunaArtwork from '../assets/hashimoto-yuna-theme-v2.png'
+import mikamiYuaAvatar from '../assets/mikami-yua-avatar.png'
+import mikamiYuaArtwork from '../assets/mikami-yua-theme.png'
 
-export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest' | 'dongbei-yujie' | 'hashimoto-yuna'
+export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest' | 'dongbei-yujie' | 'hashimoto-yuna' | 'mikami-yua'
 
 type ThemeVariable =
   | '--bg'
@@ -230,10 +232,37 @@ const HASHIMOTO_YUNA: ThemeVariables = {
   '--blue-soft': '#202b36',
 }
 
+const MIKAMI_YUA: ThemeVariables = {
+  '--bg': '#eaf8ff',
+  '--bg-panel': '#f7fcff',
+  '--bg-elevated': '#ffffff',
+  '--bg-subtle': '#dff3ff',
+  '--bg-hover': '#ccecff',
+  '--bg-active': '#b9e3fa',
+  '--border': '#b9ddec',
+  '--border-strong': '#82bdd7',
+  '--text': '#17384c',
+  '--text-2': '#4f7185',
+  '--text-3': '#86a5b6',
+  '--text-3-strong': '#6e91a4',
+  '--accent': '#0b94d8',
+  '--accent-strong': '#0876af',
+  '--accent-soft': '#d5f1ff',
+  '--green': '#399b82',
+  '--green-soft': '#dcf4ed',
+  '--red': '#db6874',
+  '--red-soft': '#ffe5e8',
+  '--amber': '#b8842d',
+  '--amber-soft': '#fff1d7',
+  '--blue': '#168dcc',
+  '--blue-soft': '#d9f1fd',
+}
+
 /**
  * The theme catalog is the single source of truth for labels, swatches,
- * tokens, and optional artwork. Adding a theme should only require one
- * definition here plus its translations.
+ * tokens, and optional artwork. New themes must also provide translations,
+ * scoped component styling, assets, and tests. Follow
+ * docs/THEME_DEVELOPMENT.md for the complete implementation contract.
  */
 export const THEMES: readonly ThemeDefinition[] = [
   {
@@ -275,6 +304,20 @@ export const THEMES: readonly ThemeDefinition[] = [
     avatar: hashimotoYunaAvatar,
     avatarPosition: 'center 34%',
     quote: 'Black Cherry · Pi Agent',
+  },
+  {
+    id: 'mikami-yua',
+    labelKey: 'settings.theme.mikamiYua',
+    hintKey: 'settings.theme.mikamiYuaHint',
+    swatch: 'linear-gradient(135deg, #0b94d8 0%, #69c9f2 58%, #ffffff 58%, #f29aa2 100%)',
+    colorScheme: 'light',
+    variables: MIKAMI_YUA,
+    artwork: mikamiYuaArtwork,
+    artworkPosition: 'right center',
+    artworkOpacity: 1,
+    avatar: mikamiYuaAvatar,
+    avatarPosition: 'center 34%',
+    quote: 'Aegean Blue · Pi Agent',
   },
 ]
 

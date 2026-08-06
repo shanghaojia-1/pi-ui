@@ -248,6 +248,8 @@ const DICT: Dict = {
   'settings.theme.dongbeiYujieHint': { zh: '带派不老铁', en: 'Bold and solid, old iron' },
   'settings.theme.hashimotoYuna': { zh: '桥本有菜', en: 'Arina Hashimoto' },
   'settings.theme.hashimotoYunaHint': { zh: '黑樱桃 · 香槟金', en: 'Black cherry · champagne' },
+  'settings.theme.mikamiYua': { zh: '三上悠亚', en: 'Yua Mikami' },
+  'settings.theme.mikamiYuaHint': { zh: '爱琴海 · 珍珠白', en: 'Aegean blue · pearl white' },
   'settings.providers': { zh: '模型提供商', en: 'Model providers' },
   'settings.newProvider': { zh: '新建供应商', en: 'New provider' },
   'settings.editProvider': { zh: '编辑', en: 'Edit' },

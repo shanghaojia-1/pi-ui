@@ -45,8 +45,8 @@ describe('i18n dictionary', () => {
 })
 
 describe('theme catalog', () => {
-  it('offers system + seven explicit themes', () => {
-    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest', 'dongbei-yujie', 'hashimoto-yuna'])
+  it('offers system + eight explicit themes', () => {
+    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest', 'dongbei-yujie', 'hashimoto-yuna', 'mikami-yua'])
   })
 
   it('every theme has a translated label and a swatch', () => {
@@ -65,5 +65,10 @@ describe('theme catalog', () => {
     expect(hashimotoYuna?.artwork).toContain('hashimoto-yuna-theme-v2.png')
     expect(hashimotoYuna?.avatar).toContain('hashimoto-yuna-avatar.png')
     expect(hashimotoYuna?.colorScheme).toBe('dark')
+    const mikamiYua = THEMES.find((theme) => theme.id === 'mikami-yua')
+    expect(mikamiYua?.hintKey).toBe('settings.theme.mikamiYuaHint')
+    expect(mikamiYua?.artwork).toContain('mikami-yua-theme.png')
+    expect(mikamiYua?.avatar).toContain('mikami-yua-avatar.png')
+    expect(mikamiYua?.colorScheme).toBe('light')
   })
 })
