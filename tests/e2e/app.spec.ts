@@ -23,6 +23,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
   let tempHome: string
   let tempAgent: string
   let tempWorkspace: string
+  let tempUserData: string
   const pageErrors: string[] = []
 
   test.beforeAll(async () => {
@@ -32,10 +33,11 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     tempHome = join(tempRoot, 'home')
     tempAgent = join(tempRoot, 'agent')
     tempWorkspace = join(tempRoot, 'workspace')
-    for (const dir of [tempHome, tempAgent, tempWorkspace]) mkdirSync(dir)
+    tempUserData = join(tempRoot, 'user-data')
+    for (const dir of [tempHome, tempAgent, tempWorkspace, tempUserData]) mkdirSync(dir)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E sandbox workspace\n')
 
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({
       args: [PROJECT_ROOT],
@@ -61,7 +63,10 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
   async function resizeTo(width: number): Promise<number> {
     await app.evaluate(({ BrowserWindow }, w) => {
       const win = BrowserWindow.getAllWindows()[0]
-      if (win) win.setSize(w, 800)
+      // setContentSize (not setSize) so the web content area is exactly the
+      // requested width on every platform (Windows frames + DPI would shave
+      // px off innerWidth/innerHeight otherwise).
+      if (win) win.setContentSize(w, 800)
     }, width)
     await page.waitForTimeout(500)
     return page.evaluate(() => window.innerWidth)
@@ -621,22 +626,34 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     // the far right never hit a drag region or a hidden-column element.
     const rightCol = await page.locator('.app-col-right').boundingBox()
     expect(rightCol === null || rightCol.width === 0).toBe(true)
-    const rightStripBox = await page.locator('.app-col-right .drag-strip').boundingBox()
-    // The strip's border-box may still measure 1px (its border-left) even though
-    // the 0px-wide column clips it fully off-screen: it must never be reachable.
-    expect(rightStripBox === null || rightStripBox.x >= narrow || rightStripBox.width === 0).toBe(true)
-    // Strips never overlap content: only the sidebar + center strips are on-screen
-    // (their box starts inside the viewport) and the topbar still starts below them.
-    const narrowStripInfo = await page.locator('.drag-strip').evaluateAll((els) =>
-      els.map((el) => {
+    const isDarwin = (await page.evaluate(() => window.desktop.platform)) === 'darwin'
+    if (isDarwin) {
+      // Drag strips exist in the DOM on macOS only (conditional render). The
+      // collapsed right column's strip must never be reachable, and only the
+      // sidebar + center strips may be on-screen, below the topbar.
+      const rightStripBox = await page.locator('.app-col-right .drag-strip').evaluate((el) => {
         const rect = (el as HTMLElement).getBoundingClientRect()
-        return { left: rect.left, width: rect.width, bottom: rect.top + rect.height }
-      }),
-    )
-    const visibleStrips = narrowStripInfo.filter((s) => s.width > 0 && s.left < narrow)
-    expect(visibleStrips).toHaveLength(2)
-    const narrowTopbarY = (await page.locator('.topbar').boundingBox())?.y ?? 0
-    for (const s of visibleStrips) expect(narrowTopbarY).toBeGreaterThanOrEqual(s.bottom - 1)
+        return rect.width === 0 && rect.height === 0 ? null : { x: rect.x, width: rect.width }
+      })
+      // The strip's border-box may still measure 1px (its border-left) even
+      // though the 0px-wide column clips it fully off-screen: never reachable.
+      expect(rightStripBox === null || rightStripBox.x >= narrow || rightStripBox.width === 0).toBe(true)
+      const narrowStripInfo = await page.locator('.drag-strip').evaluateAll((els) =>
+        els.map((el) => {
+          const rect = (el as HTMLElement).getBoundingClientRect()
+          return { left: rect.left, width: rect.width, bottom: rect.top + rect.height }
+        }),
+      )
+      const visibleStrips = narrowStripInfo.filter((s) => s.width > 0 && s.left < narrow)
+      // Only the sidebar + center strips are on-screen; the topbar sits below them.
+      expect(visibleStrips).toHaveLength(2)
+      const narrowTopbarY = (await page.locator('.topbar').boundingBox())?.y ?? 0
+      for (const s of visibleStrips) expect(narrowTopbarY).toBeGreaterThanOrEqual(s.bottom - 1)
+    } else {
+      // Native frame: no strip exists in the DOM, so none can be draggable or
+      // overlap content. The elementsFromPoint check below covers the rest.
+      await expect(page.locator('.drag-strip')).toHaveCount(0)
+    }
     const hits = await page.evaluate(
       ([x, y]) =>
         document.elementsFromPoint(x, y).map((el) => ({
@@ -756,10 +773,11 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
   let tempHome: string
   let tempAgent: string
   let tempWorkspace: string
+  let tempUserData: string
   const pageErrors: string[] = []
 
   async function launch(): Promise<void> {
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
     app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
@@ -795,7 +813,8 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     tempHome = join(tempRoot, 'home')
     tempAgent = join(tempRoot, 'agent')
     tempWorkspace = join(tempRoot, 'workspace')
-    for (const dir of [tempHome, tempAgent, tempWorkspace]) mkdirSync(dir)
+    tempUserData = join(tempRoot, 'user-data')
+    for (const dir of [tempHome, tempAgent, tempWorkspace, tempUserData]) mkdirSync(dir)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E managed-mode workspace\n')
     await launch()
   })

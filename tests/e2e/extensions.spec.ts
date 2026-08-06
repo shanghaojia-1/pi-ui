@@ -1,7 +1,8 @@
 import { _electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /**
  * Extension loading + dynamic slash-command integration: a seeded extension
@@ -9,6 +10,9 @@ import { join } from 'node:path'
  * off), show up in the Settings extensions section, and contribute its
  * command to the composer `/` menu.
  */
+const HERE = dirname(fileURLToPath(import.meta.url))
+const PROJECT_ROOT = resolve(HERE, '../..')
+
 test.describe.serial('extensions (isolated)', () => {
   let app: ElectronApplication
   let page: Page
@@ -41,9 +45,11 @@ test.describe.serial('extensions (isolated)', () => {
 }
 `,
     )
-    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh' } as Record<string, string>
+    const tempUserData = join(tempRoot, 'user-data')
+    mkdirSync(tempUserData)
+    const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
-    app = await _electron.launch({ args: ['/home/shj/桌面/pi-ui'], cwd: tempWorkspace, env })
+    app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
   })
