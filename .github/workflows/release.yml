@@ -119,6 +119,8 @@ jobs:
       - name: Upload to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          # 不 checkout 源码时 gh 无法从 git remote 推断仓库，需显式指定
+          GH_REPO: ${{ github.repository }}
         run: |
           TAG="continuous-${GITHUB_REF_NAME}"
           NOTES=$'Auto-built from the release branch — download the file for your platform and run it.\n自动构建于 release 分支：macOS 选 *-mac-arm64.zip（Apple Silicon）或 *-mac-x64.zip（Intel）；Windows 选 *-win-x64.zip；Linux 选 *-linux-x64.AppImage（chmod +x 后直接运行）。'
