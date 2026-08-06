@@ -603,14 +603,20 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     const settingsDialog = page.getByRole('dialog', { name: '设置' })
     await expect(settingsDialog).toBeVisible()
     const viewportHeight = await page.evaluate(() => window.innerHeight)
-    for (const heading of ['模型提供商', '默认设置']) {
-      const box = await page.getByRole('heading', { name: heading, exact: true }).boundingBox()
-      expect(box).not.toBeNull()
-      expect((box as { y: number; height: number }).y).toBeGreaterThanOrEqual(0)
-      expect((box as { y: number; height: number }).y + (box as { y: number; height: number }).height).toBeLessThanOrEqual(
-        viewportHeight,
-      )
-    }
+    // The providers section is entry-only: its heading sits at the top and is
+    // visible without scrolling. Earlier tests may leave a configured provider
+    // row in models.json, which pushes the defaults section below the fold —
+    // so that heading is asserted after scrolling into view instead of
+    // depending on the provider-list height.
+    const providerBox = await page.getByRole('heading', { name: '模型提供商', exact: true }).boundingBox()
+    expect(providerBox).not.toBeNull()
+    expect((providerBox as { y: number; height: number }).y).toBeGreaterThanOrEqual(0)
+    expect((providerBox as { y: number; height: number }).y + (providerBox as { y: number; height: number }).height).toBeLessThanOrEqual(
+      viewportHeight,
+    )
+    const defaultsHeading = page.getByRole('heading', { name: '默认设置', exact: true })
+    await defaultsHeading.scrollIntoViewIfNeeded()
+    await expect(defaultsHeading).toBeVisible()
     await page.getByRole('button', { name: '关闭设置' }).click()
     await expect(settingsDialog).not.toBeVisible()
     const lightBg = await page.evaluate(() => getComputedStyle(document.querySelector('.app') as HTMLElement).backgroundColor)
