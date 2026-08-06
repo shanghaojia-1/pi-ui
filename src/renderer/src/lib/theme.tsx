@@ -1,7 +1,10 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import dongbeiYujieAvatar from '../assets/dongbei-yujie-avatar.png'
 import dongbeiYujieArtwork from '../assets/dongbei-yujie-theme.png'
+import hashimotoYunaAvatar from '../assets/hashimoto-yuna-avatar.png'
+import hashimotoYunaArtwork from '../assets/hashimoto-yuna-theme-v2.png'
 
-export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest' | 'dongbei-yujie'
+export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest' | 'dongbei-yujie' | 'hashimoto-yuna'
 
 type ThemeVariable =
   | '--bg'
@@ -40,6 +43,8 @@ export interface ThemeDefinition {
   readonly artwork?: string
   readonly artworkPosition?: string
   readonly artworkOpacity?: number
+  readonly avatar?: string
+  readonly avatarPosition?: string
   readonly quote?: string
 }
 
@@ -199,6 +204,32 @@ const DONG_BEI_YUJIE: ThemeVariables = {
   '--blue-soft': '#e2f0fa',
 }
 
+const HASHIMOTO_YUNA: ThemeVariables = {
+  '--bg': '#120e11',
+  '--bg-panel': '#191317',
+  '--bg-elevated': '#251c21',
+  '--bg-subtle': '#302229',
+  '--bg-hover': '#3c2a32',
+  '--bg-active': '#493039',
+  '--border': '#3e2d34',
+  '--border-strong': '#654750',
+  '--text': '#f4eee9',
+  '--text-2': '#c9b9ae',
+  '--text-3': '#8f7c76',
+  '--text-3-strong': '#ad9790',
+  '--accent': '#d5aa7e',
+  '--accent-strong': '#f0c99e',
+  '--accent-soft': '#3c2a24',
+  '--green': '#7eae8c',
+  '--green-soft': '#1d3025',
+  '--red': '#e07882',
+  '--red-soft': '#3b2028',
+  '--amber': '#d5aa7e',
+  '--amber-soft': '#362a20',
+  '--blue': '#8da9c4',
+  '--blue-soft': '#202b36',
+}
+
 /**
  * The theme catalog is the single source of truth for labels, swatches,
  * tokens, and optional artwork. Adding a theme should only require one
@@ -227,7 +258,23 @@ export const THEMES: readonly ThemeDefinition[] = [
     artwork: dongbeiYujieArtwork,
     artworkPosition: 'center center',
     artworkOpacity: 0.92,
-    quote: '带派不老铁',
+    avatar: dongbeiYujieAvatar,
+    avatarPosition: 'center 34%',
+    quote: '带派不老铁 · Pi Agent',
+  },
+  {
+    id: 'hashimoto-yuna',
+    labelKey: 'settings.theme.hashimotoYuna',
+    hintKey: 'settings.theme.hashimotoYunaHint',
+    swatch: 'linear-gradient(135deg, #120e11 0%, #4a1728 58%, #d5aa7e 58%, #f0c99e 100%)',
+    colorScheme: 'dark',
+    variables: HASHIMOTO_YUNA,
+    artwork: hashimotoYunaArtwork,
+    artworkPosition: 'right center',
+    artworkOpacity: 1,
+    avatar: hashimotoYunaAvatar,
+    avatarPosition: 'center 34%',
+    quote: 'Black Cherry · Pi Agent',
   },
 ]
 
@@ -249,7 +296,7 @@ function systemPrefersDark(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(SYSTEM_QUERY).matches
 }
 
-function findTheme(theme: ThemeId): ThemeDefinition {
+export function getThemeDefinition(theme: ThemeId): ThemeDefinition {
   return THEME_BY_ID.get(theme) ?? THEMES[0]!
 }
 
@@ -258,8 +305,8 @@ function applyTheme(theme: ThemeId): void {
 
   const root = document.documentElement
   const definition = theme === 'system'
-    ? (systemPrefersDark() ? findTheme('dark') : findTheme('light'))
-    : findTheme(theme)
+    ? (systemPrefersDark() ? getThemeDefinition('dark') : getThemeDefinition('light'))
+    : getThemeDefinition(theme)
 
   if (theme === 'system') delete root.dataset.theme
   else root.dataset.theme = theme
@@ -269,6 +316,8 @@ function applyTheme(theme: ThemeId): void {
   root.style.setProperty('--theme-artwork', definition.artwork === undefined ? 'none' : `url(${JSON.stringify(definition.artwork)})`)
   root.style.setProperty('--theme-artwork-position', definition.artworkPosition ?? 'center')
   root.style.setProperty('--theme-artwork-opacity', String(definition.artworkOpacity ?? 0))
+  root.style.setProperty('--theme-avatar', definition.avatar === undefined ? 'none' : `url(${JSON.stringify(definition.avatar)})`)
+  root.style.setProperty('--theme-avatar-position', definition.avatarPosition ?? 'center')
   root.style.setProperty('--theme-quote', definition.quote === undefined ? '""' : JSON.stringify(definition.quote))
 }
 

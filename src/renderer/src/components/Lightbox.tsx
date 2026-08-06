@@ -6,6 +6,7 @@ interface ImageLightboxProps {
   /** data URL of the image to show full-size. */
   src: string
   alt?: string
+  variant?: 'image' | 'avatar'
   onClose: () => void
 }
 
@@ -15,7 +16,7 @@ interface ImageLightboxProps {
  * button, or Escape. While open, page scroll is locked and the Escape key is
  * captured so the app's own Escape handling (abort / blur) cannot fire.
  */
-export default function ImageLightbox({ src, alt, onClose }: ImageLightboxProps) {
+export default function ImageLightbox({ src, alt, variant = 'image', onClose }: ImageLightboxProps) {
   const { t } = useI18n()
 
   useEffect(() => {
@@ -55,7 +56,7 @@ export default function ImageLightbox({ src, alt, onClose }: ImageLightboxProps)
         <X size={18} aria-hidden="true" />
       </button>
       <img
-        className="lightbox-img"
+        className={`lightbox-img${variant === 'avatar' ? ' lightbox-avatar-img' : ''}`}
         src={src}
         alt={alt ?? t('lightbox.aria')}
         onClick={(e) => e.stopPropagation()}

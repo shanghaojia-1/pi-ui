@@ -606,7 +606,18 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                         onClick={() => setTheme(item.id as ThemeId)}
                         title={t(item.labelKey)}
                       >
-                        <span className="sett-theme-swatch" style={{ background: item.swatch }} aria-hidden="true" />
+                        <span
+                          className={`sett-theme-swatch${item.artwork === undefined ? '' : ' sett-theme-swatch-artwork'}`}
+                          style={
+                            item.artwork === undefined
+                              ? { background: item.swatch }
+                              : {
+                                  backgroundImage: `url(${JSON.stringify(item.artwork)})`,
+                                  backgroundPosition: item.artworkPosition ?? 'center',
+                                }
+                          }
+                          aria-hidden="true"
+                        />
                         <span className="sett-theme-copy">
                           <span>{t(item.labelKey)}</span>
                           {item.hintKey !== undefined ? <small>{t(item.hintKey)}</small> : null}

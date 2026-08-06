@@ -11,6 +11,7 @@ import Composer, { type ComposerHandle } from './components/Composer'
 import RightPanel from './components/RightPanel'
 import SettingsPanel from './components/SettingsPanel'
 import TelemetryBar from './components/TelemetryBar'
+import { getThemeDefinition, useTheme } from './lib/theme'
 
 // Host platform comes from the preload contract (never sniffed from userAgent).
 const platform = window.desktop?.platform ?? 'other'
@@ -18,6 +19,7 @@ const isMac = platform === 'darwin'
 
 export default function App() {
   const { t } = useI18n()
+  const { theme } = useTheme()
   const { snapshot, loadError } = useSnapshot()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
@@ -35,6 +37,7 @@ export default function App() {
   const composerRef = useRef<ComposerHandle>(null)
   const snapRef = useRef<AppSnapshot | null>(snapshot)
   snapRef.current = snapshot
+  const splashTheme = getThemeDefinition(theme)
 
   const narrow = useMediaQuery('(max-width: 1080px)')
   const compact = useMediaQuery('(max-width: 780px)')
@@ -277,7 +280,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="splash-footer">{t('app.splash.footer')}</div>
+        <div className="splash-footer">{splashTheme.quote ?? t('app.splash.footer')}</div>
       </div>
     )
   }

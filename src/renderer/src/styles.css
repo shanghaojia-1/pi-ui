@@ -44,6 +44,8 @@
   --theme-artwork: none;
   --theme-artwork-position: center;
   --theme-artwork-opacity: 0;
+  --theme-avatar: none;
+  --theme-avatar-position: center;
   --theme-quote: "";
 }
 
@@ -157,6 +159,33 @@ html[data-theme='dongbei-yujie'] .main {
 html[data-theme='dongbei-yujie'] .topbar {
   background: rgba(255, 240, 245, 0.82);
 }
+html[data-theme='hashimoto-yuna'] .app::after {
+  /* The artwork already carries the theme identity; keep floating copy away
+     from the portrait and the composer controls. */
+  opacity: 0;
+}
+html[data-theme='hashimoto-yuna'] .sidebar,
+html[data-theme='hashimoto-yuna'] .right-panel {
+  background: rgba(18, 14, 17, 0.96);
+}
+html[data-theme='hashimoto-yuna'] .main {
+  background-color: var(--bg-panel);
+  background-image: linear-gradient(
+      90deg,
+      rgba(18, 14, 17, 0.98) 0%,
+      rgba(18, 14, 17, 0.92) 42%,
+      rgba(18, 14, 17, 0.34) 66%,
+      rgba(18, 14, 17, 0.08) 100%
+    ),
+    var(--theme-artwork);
+  background-position: right center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+html[data-theme='hashimoto-yuna'] .topbar {
+  background: rgba(18, 14, 17, 0.9);
+  backdrop-filter: blur(14px);
+}
 @media (max-width: 780px) {
   .app::after {
     right: 14px;
@@ -248,6 +277,8 @@ summary,
 }
 
 .conversation {
+  position: relative;
+  z-index: 1;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -327,6 +358,8 @@ kbd {
 /* ============ top bar ============ */
 
 .topbar {
+  position: relative;
+  z-index: 80;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -336,6 +369,7 @@ kbd {
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex: none;
+  overflow: visible;
 }
 .topbar-left,
 .topbar-right {
@@ -767,12 +801,64 @@ li[aria-selected='true'] > .select-item {
 }
 .msg {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
   width: 100%;
   max-width: 780px;
   margin: 0 auto;
   padding: 0 24px 14px;
+}
+.msg-user {
+  flex-direction: row-reverse;
+}
+.msg-content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.msg-user .msg-content {
+  align-items: flex-end;
+}
+.msg-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-top: 17px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background-color: var(--bg-elevated);
+  color: var(--text-2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  padding: 0;
+  font: inherit;
+  cursor: zoom-in;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+.msg-avatar:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  transform: translateY(-1px) scale(1.04);
+}
+.msg-avatar-assistant {
+  background-image: var(--theme-avatar);
+  background-position: var(--theme-avatar-position);
+  background-size: cover;
+}
+.msg-avatar-pi {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+html[data-theme='dongbei-yujie'] .msg-avatar-assistant .msg-avatar-pi,
+html[data-theme='hashimoto-yuna'] .msg-avatar-assistant .msg-avatar-pi {
+  opacity: 0;
 }
 .msg-label {
   font-size: 10.5px;
@@ -1495,6 +1581,7 @@ li[aria-selected='true'] > .select-item {
   margin: 0 auto;
   padding: 6px 24px 14px;
 }
+
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
@@ -1687,6 +1774,13 @@ li[aria-selected='true'] > .select-item {
   cursor: default;
   background: #fff;
 }
+.lightbox-avatar-img {
+  width: min(420px, 72vw);
+  height: min(420px, 72vw);
+  object-fit: cover;
+  border-radius: 24px;
+  image-rendering: auto;
+}
 .lightbox-close {
   position: absolute;
   top: 14px;
@@ -1735,12 +1829,17 @@ li[aria-selected='true'] > .select-item {
   opacity: 0.65;
 }
 .composer-input {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
   flex: 1;
   min-width: 0;
   resize: none;
   border: 0;
+  border-radius: 0;
   outline: 0;
   background: transparent;
+  box-shadow: none;
   color: var(--text);
   font-family: inherit;
   font-size: 13.5px;
@@ -2240,6 +2339,32 @@ li[aria-selected='true'] > .select-item {
   backdrop-filter: blur(18px) saturate(1.08);
   text-align: center;
 }
+html[data-theme='hashimoto-yuna'] .splash {
+  align-items: flex-start;
+  padding-left: clamp(44px, 7vw, 120px);
+  background-image: linear-gradient(90deg, rgba(12, 8, 11, 0.62) 0%, rgba(12, 8, 11, 0.32) 48%, transparent 72%),
+    var(--theme-artwork);
+  background-position: right center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+html[data-theme='hashimoto-yuna'] .splash::before {
+  background: radial-gradient(circle at 18% 22%, rgba(213, 170, 126, 0.16), transparent 32%),
+    linear-gradient(180deg, transparent 55%, rgba(10, 6, 9, 0.5) 100%);
+}
+html[data-theme='hashimoto-yuna'] .splash-panel {
+  border-color: rgba(213, 170, 126, 0.3);
+  background: rgba(18, 14, 17, 0.78);
+  box-shadow: 0 26px 80px rgba(4, 2, 3, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(20px) saturate(0.9);
+}
+html[data-theme='hashimoto-yuna'] .splash-status {
+  background: rgba(37, 28, 33, 0.86);
+}
+html[data-theme='hashimoto-yuna'] .splash-footer {
+  width: min(520px, calc(100vw - 48px));
+  text-align: center;
+}
 .splash-mark {
   display: grid;
   place-items: center;
@@ -2325,6 +2450,13 @@ li[aria-selected='true'] > .select-item {
 .splash-spin {
   color: var(--accent);
   animation: spin 1s linear infinite;
+}
+@media (max-width: 1000px) {
+  html[data-theme='hashimoto-yuna'] .splash {
+    align-items: center;
+    padding-left: 24px;
+    background-image: linear-gradient(145deg, #120e11, #26161d);
+  }
 }
 @media (max-width: 560px) {
   .splash-panel {
@@ -2775,6 +2907,12 @@ li[aria-selected='true'] > .select-item {
   border: 1px solid var(--border-strong);
   flex: none;
 }
+.sett-theme-swatch-artwork {
+  width: 28px;
+  border-radius: 4px;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg) 30%, transparent);
+}
 .sett-toggle-row {
   display: flex;
   gap: 16px;
@@ -3026,5 +3164,1097 @@ li[aria-selected='true'] > .select-item {
   .telemetry-ctx {
     flex: 1 1 auto;
     max-width: 260px;
+  }
+}
+
+/* ============ Hashimoto Yuna — black cherry atelier ============ */
+
+html[data-theme='hashimoto-yuna'] {
+  --radius: 10px;
+  scrollbar-color: rgba(213, 170, 126, 0.48) transparent;
+}
+
+html[data-theme='hashimoto-yuna'] body {
+  background: #0d090c;
+}
+
+html[data-theme='hashimoto-yuna'] ::selection {
+  background: rgba(213, 170, 126, 0.3);
+  color: #fff8ef;
+}
+
+html[data-theme='hashimoto-yuna'] :focus-visible {
+  outline-color: #d5aa7e;
+  box-shadow: 0 0 0 3px rgba(213, 170, 126, 0.12);
+}
+
+html[data-theme='hashimoto-yuna'] .app {
+  background: #0d090c;
+}
+
+html[data-theme='hashimoto-yuna'] .app::before {
+  filter: saturate(0.86) contrast(1.04);
+}
+
+html[data-theme='hashimoto-yuna'] .platform-darwin .drag-strip {
+  background: rgba(13, 9, 12, 0.97);
+  border-color: rgba(213, 170, 126, 0.16);
+}
+
+/* Velvet side rails with a restrained lace-like light pattern. */
+html[data-theme='hashimoto-yuna'] .sidebar,
+html[data-theme='hashimoto-yuna'] .right-panel {
+  background-color: rgba(18, 14, 17, 0.97);
+  background-image: radial-gradient(circle at 16px 16px, rgba(213, 170, 126, 0.045) 0 1px, transparent 1.5px),
+    linear-gradient(180deg, rgba(74, 23, 40, 0.16), transparent 34%);
+  background-size: 32px 32px, auto;
+  border-color: rgba(213, 170, 126, 0.2);
+  box-shadow: 0 0 34px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='hashimoto-yuna'] .sidebar-workspace,
+html[data-theme='hashimoto-yuna'] .sidebar-actions,
+html[data-theme='hashimoto-yuna'] .sidebar-footer,
+html[data-theme='hashimoto-yuna'] .rp-header {
+  border-color: rgba(213, 170, 126, 0.16);
+}
+
+html[data-theme='hashimoto-yuna'] .sidebar-workspace {
+  position: relative;
+  padding-top: 16px;
+  padding-bottom: 14px;
+  background: linear-gradient(135deg, rgba(74, 23, 40, 0.28), rgba(18, 14, 17, 0.12));
+}
+
+html[data-theme='hashimoto-yuna'] .sidebar-workspace::after {
+  position: absolute;
+  right: 12px;
+  bottom: -3px;
+  width: 34px;
+  height: 5px;
+  content: '';
+  border-top: 1px solid rgba(213, 170, 126, 0.55);
+  border-bottom: 1px solid rgba(213, 170, 126, 0.18);
+}
+
+html[data-theme='hashimoto-yuna'] .sidebar-ws-icon {
+  filter: drop-shadow(0 0 7px rgba(213, 170, 126, 0.36));
+}
+
+html[data-theme='hashimoto-yuna'] .sidebar-ws-name,
+html[data-theme='hashimoto-yuna'] .rp-header,
+html[data-theme='hashimoto-yuna'] .welcome h1,
+html[data-theme='hashimoto-yuna'] .empty-workspace h2,
+html[data-theme='hashimoto-yuna'] .sett-title,
+html[data-theme='hashimoto-yuna'] .stats-head h3 {
+  font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+  letter-spacing: 0.025em;
+}
+
+html[data-theme='hashimoto-yuna'] .session-group-label {
+  color: #d5aa7e;
+  font-size: 9.5px;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+html[data-theme='hashimoto-yuna'] .session-item {
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+html[data-theme='hashimoto-yuna'] .session-item:hover {
+  border-color: rgba(213, 170, 126, 0.16);
+  background: rgba(74, 23, 40, 0.3);
+  transform: translateX(2px);
+}
+
+html[data-theme='hashimoto-yuna'] .session-item-active,
+html[data-theme='hashimoto-yuna'] .session-item-active:hover {
+  border-color: rgba(213, 170, 126, 0.34);
+  background: linear-gradient(100deg, rgba(104, 31, 53, 0.68), rgba(49, 25, 34, 0.74));
+  box-shadow: inset 3px 0 0 #d5aa7e, 0 8px 22px rgba(0, 0, 0, 0.2);
+}
+
+/* Buttons and pickers use jewelry-like gold edges instead of flat fills. */
+html[data-theme='hashimoto-yuna'] .btn,
+html[data-theme='hashimoto-yuna'] .select-trigger,
+html[data-theme='hashimoto-yuna'] .approval-badge {
+  border-color: rgba(213, 170, 126, 0.28);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(48, 34, 41, 0.96), rgba(31, 22, 27, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 5px 16px rgba(0, 0, 0, 0.12);
+}
+
+html[data-theme='hashimoto-yuna'] .btn:hover:not(:disabled),
+html[data-theme='hashimoto-yuna'] .select-trigger:hover:not(:disabled),
+html[data-theme='hashimoto-yuna'] .approval-badge:hover:not(:disabled) {
+  border-color: rgba(240, 201, 158, 0.66);
+  background: linear-gradient(145deg, rgba(73, 48, 57, 0.98), rgba(48, 29, 37, 0.98));
+  color: #fff6ea;
+}
+
+html[data-theme='hashimoto-yuna'] .btn-primary,
+html[data-theme='hashimoto-yuna'] .btn-send {
+  border-color: #e5bd91;
+  background: linear-gradient(145deg, #f0c99e, #bb875c);
+  color: #211519;
+  box-shadow: 0 7px 18px rgba(213, 170, 126, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.38);
+  font-weight: 700;
+}
+
+html[data-theme='hashimoto-yuna'] .btn-primary:hover:not(:disabled),
+html[data-theme='hashimoto-yuna'] .btn-send:hover:not(:disabled) {
+  border-color: #ffe0b8;
+  background: linear-gradient(145deg, #ffe0b8, #d5a06f);
+  color: #160e11;
+}
+
+html[data-theme='hashimoto-yuna'] .btn-icon:hover,
+html[data-theme='hashimoto-yuna'] .btn-icon[aria-pressed='true'] {
+  background: rgba(213, 170, 126, 0.13);
+  color: #f0c99e;
+}
+
+html[data-theme='hashimoto-yuna'] kbd {
+  border-color: rgba(213, 170, 126, 0.28);
+  background: rgba(13, 9, 12, 0.52);
+  color: #ad9790;
+  box-shadow: 0 1px 0 rgba(213, 170, 126, 0.18);
+}
+
+html[data-theme='hashimoto-yuna'] .topbar {
+  height: 48px;
+  padding: 0 14px;
+  border-color: rgba(213, 170, 126, 0.2);
+  background: linear-gradient(90deg, rgba(18, 14, 17, 0.97), rgba(35, 19, 27, 0.89));
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.18), inset 0 -1px 0 rgba(213, 170, 126, 0.08);
+}
+
+html[data-theme='hashimoto-yuna'] .run-pill {
+  height: 28px;
+  border-color: rgba(213, 170, 126, 0.28);
+  background: rgba(37, 28, 33, 0.78);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+html[data-theme='hashimoto-yuna'] .run-pill .run-dot,
+html[data-theme='hashimoto-yuna'] .status-dot {
+  box-shadow: 0 0 0 3px rgba(126, 174, 140, 0.1), 0 0 8px currentColor;
+}
+
+html[data-theme='hashimoto-yuna'] .select-menu,
+html[data-theme='hashimoto-yuna'] .slash-menu {
+  border-color: rgba(213, 170, 126, 0.38);
+  border-radius: 14px;
+  background: rgba(25, 19, 23, 0.97);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px);
+}
+
+html[data-theme='hashimoto-yuna'] .select-item,
+html[data-theme='hashimoto-yuna'] .slash-item {
+  border-radius: 9px;
+}
+
+html[data-theme='hashimoto-yuna'] .select-item:hover,
+html[data-theme='hashimoto-yuna'] li[aria-selected='true'] > .select-item,
+html[data-theme='hashimoto-yuna'] .slash-item-active {
+  background: linear-gradient(90deg, rgba(91, 29, 49, 0.7), rgba(60, 42, 36, 0.62));
+  color: #fff4e8;
+}
+
+/* Full-width conversation remains intact; cards carry the theme instead. */
+html[data-theme='hashimoto-yuna'] .conversation {
+  background: linear-gradient(180deg, rgba(13, 9, 12, 0.02), rgba(13, 9, 12, 0.24));
+}
+
+html[data-theme='hashimoto-yuna'] .messages {
+  padding-top: 24px;
+}
+
+html[data-theme='hashimoto-yuna'] .msg {
+  gap: 7px;
+  padding-bottom: 18px;
+}
+
+html[data-theme='hashimoto-yuna'] .msg-avatar {
+  width: 34px;
+  height: 34px;
+  border: 2px solid rgba(213, 170, 126, 0.58);
+  background-color: #251c21;
+  color: #f0c99e;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.34), 0 0 0 3px rgba(213, 170, 126, 0.07);
+}
+
+html[data-theme='hashimoto-yuna'] .msg-avatar-user {
+  background: linear-gradient(145deg, #4a2634, #24171d);
+}
+
+html[data-theme='hashimoto-yuna'] .msg-label {
+  color: #ad9790;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+html[data-theme='hashimoto-yuna'] .msg-user .msg-label {
+  color: #f0c99e;
+}
+
+html[data-theme='hashimoto-yuna'] .msg-assistant .msg-body {
+  padding: 13px 15px;
+  border: 1px solid rgba(213, 170, 126, 0.17);
+  border-radius: 17px 17px 17px 5px;
+  background: linear-gradient(145deg, rgba(29, 21, 26, 0.9), rgba(18, 14, 17, 0.82));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(14px);
+}
+
+html[data-theme='hashimoto-yuna'] .msg-user .msg-body {
+  padding: 10px 14px;
+  border-color: rgba(213, 170, 126, 0.36);
+  border-radius: 17px 17px 5px 17px;
+  background: linear-gradient(135deg, rgba(105, 31, 54, 0.94), rgba(55, 27, 38, 0.95));
+  box-shadow: 0 10px 26px rgba(18, 5, 10, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  color: #fff3ea;
+}
+
+html[data-theme='hashimoto-yuna'] .msg-image-btn img {
+  border-color: rgba(213, 170, 126, 0.42);
+  border-radius: 12px;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.32);
+}
+
+html[data-theme='hashimoto-yuna'] .md blockquote {
+  border-left-color: #d5aa7e;
+  background: rgba(213, 170, 126, 0.055);
+}
+
+html[data-theme='hashimoto-yuna'] .md-inline,
+html[data-theme='hashimoto-yuna'] .md code:not(.hljs) {
+  border-color: rgba(213, 170, 126, 0.18);
+  background: rgba(13, 9, 12, 0.5);
+  color: #f0c99e;
+}
+
+html[data-theme='hashimoto-yuna'] .codeblock,
+html[data-theme='hashimoto-yuna'] .thinking,
+html[data-theme='hashimoto-yuna'] .toolcall {
+  border-color: rgba(213, 170, 126, 0.2);
+  border-radius: 12px;
+  background: rgba(18, 14, 17, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme='hashimoto-yuna'] .thinking {
+  border-style: solid;
+  background: linear-gradient(110deg, rgba(60, 42, 36, 0.42), rgba(27, 18, 23, 0.7));
+}
+
+html[data-theme='hashimoto-yuna'] .codeblock-head,
+html[data-theme='hashimoto-yuna'] .toolcall-head,
+html[data-theme='hashimoto-yuna'] .thinking-head {
+  background: rgba(213, 170, 126, 0.035);
+}
+
+html[data-theme='hashimoto-yuna'] .welcome::before,
+html[data-theme='hashimoto-yuna'] .empty-workspace::before {
+  content: '◆';
+  margin-bottom: 8px;
+  color: #d5aa7e;
+  font-size: 13px;
+  text-shadow: 0 0 16px rgba(213, 170, 126, 0.62);
+}
+
+html[data-theme='hashimoto-yuna'] .welcome h1,
+html[data-theme='hashimoto-yuna'] .empty-workspace h2 {
+  color: #fff5e9;
+  font-size: 20px;
+}
+
+html[data-theme='hashimoto-yuna'] .suggestions button {
+  padding: 8px 14px;
+  border-color: rgba(213, 170, 126, 0.28);
+  border-radius: 999px;
+  background: rgba(25, 19, 23, 0.78);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(12px);
+}
+
+html[data-theme='hashimoto-yuna'] .suggestions button:hover {
+  border-color: #d5aa7e;
+  background: linear-gradient(135deg, rgba(91, 29, 49, 0.86), rgba(60, 42, 36, 0.86));
+  color: #ffe0b8;
+  transform: translateY(-1px);
+}
+
+/* The composer becomes the visual anchor without sacrificing its width. */
+html[data-theme='hashimoto-yuna'] .composer-wrap {
+  padding-bottom: 16px;
+}
+
+html[data-theme='hashimoto-yuna'] .composer-box {
+  overflow: hidden;
+  padding: 11px 10px 11px 15px;
+  border-color: rgba(213, 170, 126, 0.38);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(37, 28, 33, 0.94), rgba(20, 14, 18, 0.94));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(18px) saturate(0.9);
+}
+
+html[data-theme='hashimoto-yuna'] .composer-box::before {
+  position: absolute;
+  top: 0;
+  right: 18px;
+  left: 18px;
+  height: 1px;
+  content: '';
+  background: linear-gradient(90deg, transparent, rgba(240, 201, 158, 0.78), transparent);
+}
+
+html[data-theme='hashimoto-yuna'] .composer-box:focus-within {
+  border-color: rgba(240, 201, 158, 0.82);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.4);
+}
+
+html[data-theme='hashimoto-yuna'] .btn-attach,
+html[data-theme='hashimoto-yuna'] .btn-stop {
+  width: 31px;
+  height: 31px;
+  border-color: rgba(213, 170, 126, 0.24);
+  border-radius: 10px;
+  background: rgba(213, 170, 126, 0.07);
+}
+
+html[data-theme='hashimoto-yuna'] .btn-send {
+  width: 31px;
+  height: 31px;
+  border-radius: 10px;
+}
+
+html[data-theme='hashimoto-yuna'] .composer-hint {
+  color: #8f7c76;
+  letter-spacing: 0.035em;
+}
+
+/* Operational surfaces follow the same glass-and-gold hierarchy. */
+html[data-theme='hashimoto-yuna'] .telemetry-bar,
+html[data-theme='hashimoto-yuna'] .statusbar {
+  border-color: rgba(213, 170, 126, 0.16);
+  background: rgba(13, 9, 12, 0.94);
+}
+
+html[data-theme='hashimoto-yuna'] .telemetry-ctx-track {
+  height: 5px;
+  background: rgba(213, 170, 126, 0.1);
+}
+
+html[data-theme='hashimoto-yuna'] .telemetry-ctx-fill {
+  background: linear-gradient(90deg, #8d5361, #d5aa7e);
+  box-shadow: 0 0 8px rgba(213, 170, 126, 0.28);
+}
+
+html[data-theme='hashimoto-yuna'] .rp-header {
+  color: #f0c99e;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  background: linear-gradient(90deg, rgba(74, 23, 40, 0.22), transparent);
+}
+
+html[data-theme='hashimoto-yuna'] .rp-header::before {
+  content: '◆';
+  color: #d5aa7e;
+  font-size: 8px;
+}
+
+html[data-theme='hashimoto-yuna'] .rp-section,
+html[data-theme='hashimoto-yuna'] .patch,
+html[data-theme='hashimoto-yuna'] .sett-provider-card,
+html[data-theme='hashimoto-yuna'] .sett-extension {
+  border-color: rgba(213, 170, 126, 0.18);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(37, 28, 33, 0.86), rgba(22, 16, 20, 0.88));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme='hashimoto-yuna'] .rp-section-head:hover,
+html[data-theme='hashimoto-yuna'] .patch-head:hover {
+  background: rgba(213, 170, 126, 0.07);
+}
+
+html[data-theme='hashimoto-yuna'] .rp-count {
+  border-color: rgba(213, 170, 126, 0.22);
+  background: rgba(213, 170, 126, 0.08);
+  color: #c9b9ae;
+}
+
+html[data-theme='hashimoto-yuna'] .stats-overlay,
+html[data-theme='hashimoto-yuna'] .sett-overlay {
+  background: rgba(7, 4, 6, 0.7);
+  backdrop-filter: blur(8px) saturate(0.72);
+}
+
+html[data-theme='hashimoto-yuna'] .stats-box,
+html[data-theme='hashimoto-yuna'] .sett-sheet {
+  border-color: rgba(213, 170, 126, 0.34);
+  background-color: rgba(20, 14, 18, 0.98);
+  background-image: radial-gradient(circle at top right, rgba(103, 29, 52, 0.22), transparent 34%);
+  box-shadow: -18px 0 58px rgba(0, 0, 0, 0.48), inset 1px 0 0 rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme='hashimoto-yuna'] .stats-box {
+  border-radius: 18px;
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-head,
+html[data-theme='hashimoto-yuna'] .sett-live {
+  border-color: rgba(213, 170, 126, 0.16);
+  background: rgba(13, 9, 12, 0.5);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-title {
+  color: #f0c99e;
+  font-size: 16px;
+}
+
+html[data-theme='hashimoto-yuna'] .sett-section {
+  border-color: rgba(213, 170, 126, 0.2);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(37, 28, 33, 0.9), rgba(24, 17, 21, 0.9));
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-section h3 {
+  color: #ead6c2;
+  letter-spacing: 0.08em;
+}
+
+html[data-theme='hashimoto-yuna'] .sett-input,
+html[data-theme='hashimoto-yuna'] .sett-select,
+html[data-theme='hashimoto-yuna'] .sett-readonly,
+html[data-theme='hashimoto-yuna'] .sett-theme,
+html[data-theme='hashimoto-yuna'] .sett-type,
+html[data-theme='hashimoto-yuna'] .sett-model-row {
+  border-color: rgba(213, 170, 126, 0.22);
+  background: rgba(13, 9, 12, 0.46);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-input:focus,
+html[data-theme='hashimoto-yuna'] .sett-select:focus {
+  border-color: #d5aa7e;
+  outline-color: rgba(213, 170, 126, 0.28);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-theme-active,
+html[data-theme='hashimoto-yuna'] .sett-theme-active:hover,
+html[data-theme='hashimoto-yuna'] .sett-type-active,
+html[data-theme='hashimoto-yuna'] .sett-type-active:hover {
+  border-color: #d5aa7e;
+  background: linear-gradient(135deg, rgba(101, 29, 52, 0.72), rgba(60, 42, 36, 0.68));
+  box-shadow: 0 0 0 2px rgba(213, 170, 126, 0.08);
+}
+
+html[data-theme='hashimoto-yuna'] .sett-approval {
+  border-color: rgba(224, 120, 130, 0.72);
+  background: linear-gradient(145deg, rgba(59, 32, 40, 0.88), rgba(31, 18, 24, 0.9));
+}
+
+html[data-theme='hashimoto-yuna'] .lightbox {
+  background: rgba(7, 4, 6, 0.86);
+  backdrop-filter: blur(12px) saturate(0.75);
+}
+
+html[data-theme='hashimoto-yuna'] .lightbox-img {
+  border: 1px solid rgba(213, 170, 126, 0.42);
+  border-radius: 16px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.68), 0 0 0 6px rgba(213, 170, 126, 0.04);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme='hashimoto-yuna'] .composer-box,
+  html[data-theme='hashimoto-yuna'] .msg-body,
+  html[data-theme='hashimoto-yuna'] .rp-section {
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+  }
+}
+
+/* ============ Dongbei Yujie — bold pink studio ============ */
+
+html[data-theme='dongbei-yujie'] {
+  --radius: 12px;
+  scrollbar-color: rgba(230, 83, 135, 0.48) transparent;
+}
+
+html[data-theme='dongbei-yujie'] body {
+  background: #ffe7f0;
+}
+
+html[data-theme='dongbei-yujie'] ::selection {
+  background: rgba(230, 83, 135, 0.24);
+  color: #54283b;
+}
+
+html[data-theme='dongbei-yujie'] :focus-visible {
+  outline-color: #e65387;
+  box-shadow: 0 0 0 4px rgba(230, 83, 135, 0.12);
+}
+
+html[data-theme='dongbei-yujie'] .app {
+  background: #ffe7f0;
+}
+
+html[data-theme='dongbei-yujie'] .platform-darwin .drag-strip {
+  background: rgba(255, 240, 245, 0.94);
+  border-color: rgba(230, 83, 135, 0.2);
+}
+
+/* Bright studio side rails: soft polka dots, white cards and strong labels. */
+html[data-theme='dongbei-yujie'] .sidebar,
+html[data-theme='dongbei-yujie'] .right-panel {
+  background-color: rgba(255, 246, 250, 0.94);
+  background-image: radial-gradient(circle at 12px 12px, rgba(230, 83, 135, 0.075) 0 2px, transparent 2.5px),
+    linear-gradient(180deg, rgba(255, 197, 218, 0.28), transparent 28%);
+  background-size: 24px 24px, auto;
+  border-color: rgba(230, 83, 135, 0.22);
+  box-shadow: 0 0 30px rgba(149, 41, 83, 0.08);
+}
+
+html[data-theme='dongbei-yujie'] .sidebar-workspace,
+html[data-theme='dongbei-yujie'] .sidebar-actions,
+html[data-theme='dongbei-yujie'] .sidebar-footer,
+html[data-theme='dongbei-yujie'] .rp-header {
+  border-color: rgba(230, 83, 135, 0.2);
+}
+
+html[data-theme='dongbei-yujie'] .sidebar-workspace {
+  position: relative;
+  padding-top: 16px;
+  padding-right: 62px;
+  padding-bottom: 14px;
+  background: linear-gradient(135deg, rgba(255, 197, 218, 0.56), rgba(255, 255, 255, 0.56));
+}
+
+html[data-theme='dongbei-yujie'] .sidebar-workspace::after {
+  position: absolute;
+  top: 13px;
+  right: 11px;
+  content: '带派';
+  padding: 2px 8px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #f2709c, #d93e76);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  box-shadow: 0 4px 10px rgba(200, 50, 104, 0.2);
+  transform: rotate(3deg);
+}
+
+html[data-theme='dongbei-yujie'] .sidebar-ws-icon {
+  color: #d83d75;
+  filter: drop-shadow(0 2px 4px rgba(216, 61, 117, 0.2));
+}
+
+html[data-theme='dongbei-yujie'] .sidebar-ws-name,
+html[data-theme='dongbei-yujie'] .rp-header,
+html[data-theme='dongbei-yujie'] .welcome h1,
+html[data-theme='dongbei-yujie'] .empty-workspace h2,
+html[data-theme='dongbei-yujie'] .sett-title,
+html[data-theme='dongbei-yujie'] .stats-head h3 {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+html[data-theme='dongbei-yujie'] .session-group-label {
+  color: #c83268;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+html[data-theme='dongbei-yujie'] .session-item {
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+html[data-theme='dongbei-yujie'] .session-item:hover {
+  border-color: rgba(230, 83, 135, 0.2);
+  background: rgba(255, 214, 229, 0.66);
+  transform: translateX(2px);
+}
+
+html[data-theme='dongbei-yujie'] .session-item-active,
+html[data-theme='dongbei-yujie'] .session-item-active:hover {
+  border-color: rgba(216, 61, 117, 0.42);
+  background: linear-gradient(100deg, rgba(255, 185, 211, 0.9), rgba(255, 236, 244, 0.9));
+  box-shadow: inset 4px 0 0 #dc4179, 0 7px 18px rgba(199, 57, 108, 0.12);
+}
+
+/* Rounded sticker-like controls make the theme feel energetic, not delicate. */
+html[data-theme='dongbei-yujie'] .btn,
+html[data-theme='dongbei-yujie'] .select-trigger,
+html[data-theme='dongbei-yujie'] .approval-badge {
+  border-color: rgba(230, 83, 135, 0.28);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 4px 12px rgba(171, 47, 93, 0.08), inset 0 1px 0 #fff;
+  font-weight: 650;
+}
+
+html[data-theme='dongbei-yujie'] .btn:hover:not(:disabled),
+html[data-theme='dongbei-yujie'] .select-trigger:hover:not(:disabled),
+html[data-theme='dongbei-yujie'] .approval-badge:hover:not(:disabled) {
+  border-color: #e65387;
+  background: #fff4f8;
+  color: #c83268;
+  box-shadow: 0 6px 16px rgba(200, 50, 104, 0.12);
+}
+
+html[data-theme='dongbei-yujie'] .btn-primary,
+html[data-theme='dongbei-yujie'] .btn-send {
+  border-color: #ce376e;
+  background: linear-gradient(145deg, #f06f9d, #d83d75);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(200, 50, 104, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  font-weight: 800;
+}
+
+html[data-theme='dongbei-yujie'] .btn-primary:hover:not(:disabled),
+html[data-theme='dongbei-yujie'] .btn-send:hover:not(:disabled) {
+  border-color: #ba285e;
+  background: linear-gradient(145deg, #f780a9, #c92f67);
+  color: #fff;
+}
+
+html[data-theme='dongbei-yujie'] .btn-icon:hover,
+html[data-theme='dongbei-yujie'] .btn-icon[aria-pressed='true'] {
+  background: rgba(230, 83, 135, 0.13);
+  color: #c83268;
+}
+
+html[data-theme='dongbei-yujie'] kbd {
+  border-color: rgba(230, 83, 135, 0.25);
+  background: rgba(255, 255, 255, 0.7);
+  color: #a36b82;
+  box-shadow: 0 2px 0 rgba(230, 83, 135, 0.12);
+}
+
+html[data-theme='dongbei-yujie'] .topbar {
+  height: 48px;
+  padding: 0 14px;
+  border-color: rgba(230, 83, 135, 0.22);
+  background: linear-gradient(90deg, rgba(255, 243, 248, 0.94), rgba(255, 221, 234, 0.86));
+  box-shadow: 0 8px 24px rgba(164, 44, 88, 0.08), inset 0 -1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px) saturate(1.12);
+}
+
+html[data-theme='dongbei-yujie'] .run-pill {
+  height: 28px;
+  border: 1px solid rgba(230, 83, 135, 0.24);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 3px 10px rgba(164, 44, 88, 0.07);
+}
+
+html[data-theme='dongbei-yujie'] .run-dot,
+html[data-theme='dongbei-yujie'] .status-dot {
+  box-shadow: 0 0 0 3px rgba(91, 144, 108, 0.12);
+}
+
+html[data-theme='dongbei-yujie'] .select-menu,
+html[data-theme='dongbei-yujie'] .slash-menu {
+  border-color: rgba(230, 83, 135, 0.34);
+  border-radius: 15px;
+  background: rgba(255, 250, 252, 0.97);
+  box-shadow: 0 18px 48px rgba(139, 39, 76, 0.18), inset 0 1px 0 #fff;
+  backdrop-filter: blur(18px);
+}
+
+html[data-theme='dongbei-yujie'] .select-item,
+html[data-theme='dongbei-yujie'] .slash-item {
+  border-radius: 10px;
+}
+
+html[data-theme='dongbei-yujie'] .select-item:hover,
+html[data-theme='dongbei-yujie'] li[aria-selected='true'] > .select-item,
+html[data-theme='dongbei-yujie'] .slash-item-active {
+  background: linear-gradient(90deg, #ffd5e5, #fff0f6);
+  color: #b82960;
+}
+
+/* Messages keep the original full conversation width and gain card hierarchy. */
+html[data-theme='dongbei-yujie'] .conversation {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 228, 239, 0.16));
+}
+
+html[data-theme='dongbei-yujie'] .messages {
+  padding-top: 24px;
+}
+
+html[data-theme='dongbei-yujie'] .msg {
+  gap: 7px;
+  padding-bottom: 18px;
+}
+
+html[data-theme='dongbei-yujie'] .msg-avatar {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #fff;
+  background-color: #ffe0ec;
+  color: #c83268;
+  box-shadow: 0 8px 18px rgba(184, 43, 95, 0.2), 0 0 0 1px rgba(230, 83, 135, 0.28);
+}
+
+html[data-theme='dongbei-yujie'] .msg-avatar-user {
+  background: linear-gradient(145deg, #fff, #ffd6e5);
+}
+
+html[data-theme='dongbei-yujie'] .msg-label {
+  color: #a36b82;
+  font-size: 9.5px;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+}
+
+html[data-theme='dongbei-yujie'] .msg-user .msg-label {
+  color: #c83268;
+}
+
+html[data-theme='dongbei-yujie'] .msg-assistant .msg-body {
+  padding: 13px 15px;
+  border: 1px solid rgba(230, 83, 135, 0.2);
+  border-radius: 18px 18px 18px 6px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.91), rgba(255, 244, 248, 0.87));
+  box-shadow: 0 12px 28px rgba(162, 42, 87, 0.1), inset 0 1px 0 #fff;
+  backdrop-filter: blur(15px) saturate(1.06);
+}
+
+html[data-theme='dongbei-yujie'] .msg-user .msg-body {
+  padding: 10px 14px;
+  border-color: rgba(198, 46, 100, 0.55);
+  border-radius: 18px 18px 6px 18px;
+  background: linear-gradient(135deg, rgba(239, 103, 151, 0.96), rgba(211, 55, 112, 0.96));
+  box-shadow: 0 10px 24px rgba(183, 42, 94, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+html[data-theme='dongbei-yujie'] .msg-user .md,
+html[data-theme='dongbei-yujie'] .msg-user .md a {
+  color: #fff;
+}
+
+html[data-theme='dongbei-yujie'] .msg-image-btn img {
+  border: 3px solid #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(168, 42, 90, 0.2), 0 0 0 1px rgba(230, 83, 135, 0.22);
+}
+
+html[data-theme='dongbei-yujie'] .md blockquote {
+  border-left-color: #e65387;
+  background: rgba(255, 214, 229, 0.42);
+}
+
+html[data-theme='dongbei-yujie'] .codeblock,
+html[data-theme='dongbei-yujie'] .thinking,
+html[data-theme='dongbei-yujie'] .toolcall {
+  border-color: rgba(230, 83, 135, 0.22);
+  border-radius: 13px;
+  background: rgba(255, 250, 252, 0.84);
+  box-shadow: 0 6px 16px rgba(169, 46, 92, 0.07), inset 0 1px 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .thinking {
+  border-style: solid;
+  background: linear-gradient(110deg, rgba(255, 224, 236, 0.86), rgba(255, 249, 251, 0.86));
+}
+
+html[data-theme='dongbei-yujie'] .codeblock-head,
+html[data-theme='dongbei-yujie'] .toolcall-head,
+html[data-theme='dongbei-yujie'] .thinking-head {
+  background: rgba(255, 214, 229, 0.25);
+}
+
+html[data-theme='dongbei-yujie'] .welcome::before,
+html[data-theme='dongbei-yujie'] .empty-workspace::before {
+  content: '✦';
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 8px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #f276a2, #d83d75);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(200, 50, 104, 0.22);
+  transform: rotate(-5deg);
+}
+
+html[data-theme='dongbei-yujie'] .welcome h1,
+html[data-theme='dongbei-yujie'] .empty-workspace h2 {
+  color: #54283b;
+  font-size: 20px;
+}
+
+html[data-theme='dongbei-yujie'] .suggestions button {
+  padding: 8px 14px;
+  border: 2px solid rgba(230, 83, 135, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #8b5268;
+  font-weight: 650;
+  box-shadow: 0 7px 16px rgba(169, 46, 92, 0.09);
+  backdrop-filter: blur(12px);
+}
+
+html[data-theme='dongbei-yujie'] .suggestions button:hover {
+  border-color: #e65387;
+  background: #ffe0ec;
+  color: #c83268;
+  transform: translateY(-2px) rotate(-0.5deg);
+}
+
+/* A substantial white input card anchors the busy photographic background. */
+html[data-theme='dongbei-yujie'] .composer-wrap {
+  padding-bottom: 16px;
+}
+
+html[data-theme='dongbei-yujie'] .composer-box {
+  overflow: hidden;
+  padding: 11px 10px 11px 15px;
+  border: 2px solid rgba(230, 83, 135, 0.36);
+  border-radius: 19px;
+  background: rgba(255, 252, 253, 0.92);
+  box-shadow: 0 18px 40px rgba(154, 39, 82, 0.16), inset 0 1px 0 #fff;
+  backdrop-filter: blur(18px) saturate(1.08);
+}
+
+html[data-theme='dongbei-yujie'] .composer-box::before {
+  content: none;
+}
+
+html[data-theme='dongbei-yujie'] .composer-box:focus-within {
+  border-color: #e65387;
+  box-shadow: 0 20px 44px rgba(154, 39, 82, 0.19);
+}
+
+html[data-theme='dongbei-yujie'] .composer-input,
+html[data-theme='hashimoto-yuna'] .composer-input {
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='dongbei-yujie'] .btn-attach,
+html[data-theme='dongbei-yujie'] .btn-stop {
+  width: 31px;
+  height: 31px;
+  border-color: rgba(230, 83, 135, 0.26);
+  border-radius: 10px;
+  background: #ffe7f0;
+}
+
+html[data-theme='dongbei-yujie'] .btn-send {
+  width: 31px;
+  height: 31px;
+  border-radius: 10px;
+}
+
+html[data-theme='dongbei-yujie'] .composer-hint {
+  color: #a36b82;
+  font-weight: 550;
+}
+
+html[data-theme='dongbei-yujie'] .telemetry-bar,
+html[data-theme='dongbei-yujie'] .statusbar {
+  border-color: rgba(230, 83, 135, 0.2);
+  background: rgba(255, 243, 248, 0.94);
+}
+
+html[data-theme='dongbei-yujie'] .telemetry-ctx-track {
+  height: 5px;
+  background: rgba(230, 83, 135, 0.12);
+}
+
+html[data-theme='dongbei-yujie'] .telemetry-ctx-fill {
+  background: linear-gradient(90deg, #f18aaf, #d83d75);
+  box-shadow: 0 0 8px rgba(230, 83, 135, 0.22);
+}
+
+html[data-theme='dongbei-yujie'] .rp-header {
+  color: #c83268;
+  font-size: 13px;
+  letter-spacing: 0.035em;
+  background: linear-gradient(90deg, rgba(255, 197, 218, 0.42), transparent);
+}
+
+html[data-theme='dongbei-yujie'] .rp-header::before {
+  content: '✦';
+  color: #e65387;
+  font-size: 11px;
+}
+
+html[data-theme='dongbei-yujie'] .rp-section,
+html[data-theme='dongbei-yujie'] .patch,
+html[data-theme='dongbei-yujie'] .sett-provider-card,
+html[data-theme='dongbei-yujie'] .sett-extension {
+  border-color: rgba(230, 83, 135, 0.2);
+  border-radius: 13px;
+  background: rgba(255, 252, 253, 0.82);
+  box-shadow: 0 8px 20px rgba(162, 42, 87, 0.08), inset 0 1px 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .rp-section-head:hover,
+html[data-theme='dongbei-yujie'] .patch-head:hover {
+  background: rgba(255, 214, 229, 0.42);
+}
+
+html[data-theme='dongbei-yujie'] .rp-count {
+  border-color: rgba(230, 83, 135, 0.2);
+  background: #ffe3ee;
+  color: #a36b82;
+}
+
+html[data-theme='dongbei-yujie'] .stats-overlay,
+html[data-theme='dongbei-yujie'] .sett-overlay {
+  background: rgba(83, 28, 50, 0.32);
+  backdrop-filter: blur(7px) saturate(0.9);
+}
+
+html[data-theme='dongbei-yujie'] .stats-box,
+html[data-theme='dongbei-yujie'] .sett-sheet {
+  border-color: rgba(230, 83, 135, 0.34);
+  background-color: rgba(255, 247, 250, 0.98);
+  background-image: radial-gradient(circle at top right, rgba(255, 181, 207, 0.48), transparent 34%);
+  box-shadow: -16px 0 46px rgba(112, 26, 59, 0.18), inset 1px 0 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .stats-box {
+  border-radius: 19px;
+  box-shadow: 0 24px 60px rgba(112, 26, 59, 0.22), inset 0 1px 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .sett-head,
+html[data-theme='dongbei-yujie'] .sett-live {
+  border-color: rgba(230, 83, 135, 0.18);
+  background: rgba(255, 238, 245, 0.66);
+}
+
+html[data-theme='dongbei-yujie'] .sett-title {
+  color: #c83268;
+  font-size: 16px;
+}
+
+html[data-theme='dongbei-yujie'] .sett-section {
+  border-color: rgba(230, 83, 135, 0.2);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 9px 22px rgba(169, 46, 92, 0.08), inset 0 1px 0 #fff;
+}
+
+html[data-theme='dongbei-yujie'] .sett-section h3 {
+  color: #713b52;
+  font-weight: 800;
+}
+
+html[data-theme='dongbei-yujie'] .sett-input,
+html[data-theme='dongbei-yujie'] .sett-select,
+html[data-theme='dongbei-yujie'] .sett-readonly,
+html[data-theme='dongbei-yujie'] .sett-theme,
+html[data-theme='dongbei-yujie'] .sett-type,
+html[data-theme='dongbei-yujie'] .sett-model-row {
+  border-color: rgba(230, 83, 135, 0.22);
+  background: rgba(255, 250, 252, 0.88);
+}
+
+html[data-theme='dongbei-yujie'] .sett-input:focus,
+html[data-theme='dongbei-yujie'] .sett-select:focus {
+  border-color: #e65387;
+  outline-color: rgba(230, 83, 135, 0.22);
+}
+
+html[data-theme='dongbei-yujie'] .sett-theme-active,
+html[data-theme='dongbei-yujie'] .sett-theme-active:hover,
+html[data-theme='dongbei-yujie'] .sett-type-active,
+html[data-theme='dongbei-yujie'] .sett-type-active:hover {
+  border-color: #e65387;
+  background: linear-gradient(135deg, #ffd5e5, #fff4f8);
+  box-shadow: 0 0 0 3px rgba(230, 83, 135, 0.08);
+}
+
+html[data-theme='dongbei-yujie'] .sett-approval {
+  border-color: rgba(201, 74, 91, 0.58);
+  background: linear-gradient(145deg, rgba(255, 225, 229, 0.92), rgba(255, 247, 249, 0.92));
+}
+
+html[data-theme='dongbei-yujie'] .lightbox {
+  background: rgba(75, 21, 42, 0.76);
+  backdrop-filter: blur(10px) saturate(0.88);
+}
+
+html[data-theme='dongbei-yujie'] .lightbox-img {
+  border: 4px solid #fff;
+  border-radius: 18px;
+  box-shadow: 0 24px 68px rgba(88, 20, 46, 0.4), 0 0 0 1px rgba(230, 83, 135, 0.36);
+}
+
+/* Startup gets a bolder variety-show card while keeping the supplied image. */
+html[data-theme='dongbei-yujie'] .splash {
+  background-image: linear-gradient(110deg, rgba(255, 247, 250, 0.75), rgba(255, 205, 224, 0.34)), var(--theme-artwork);
+}
+
+html[data-theme='dongbei-yujie'] .splash::before {
+  background: radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.9), transparent 24%),
+    radial-gradient(circle at 78% 74%, rgba(230, 83, 135, 0.18), transparent 28%);
+}
+
+html[data-theme='dongbei-yujie'] .splash-panel {
+  border: 3px solid rgba(255, 255, 255, 0.88);
+  border-radius: 26px;
+  background: rgba(255, 247, 251, 0.76);
+  box-shadow: 0 26px 72px rgba(158, 43, 85, 0.2), 0 0 0 1px rgba(230, 83, 135, 0.22);
+  backdrop-filter: blur(20px) saturate(1.12);
+}
+
+html[data-theme='dongbei-yujie'] .splash-mark {
+  border: 3px solid #fff;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #f47ba6, #d83d75);
+  box-shadow: 0 12px 28px rgba(200, 50, 104, 0.3);
+  transform: rotate(-3deg);
+}
+
+html[data-theme='dongbei-yujie'] .splash-eyebrow {
+  color: #c83268;
+}
+
+html[data-theme='dongbei-yujie'] .splash-status {
+  border-color: rgba(230, 83, 135, 0.24);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 6px 16px rgba(169, 46, 92, 0.09);
+}
+
+html[data-theme='dongbei-yujie'] .splash-footer {
+  padding: 5px 13px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: rgba(230, 83, 135, 0.84);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 7px 18px rgba(200, 50, 104, 0.2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html[data-theme='dongbei-yujie'] .composer-box,
+  html[data-theme='dongbei-yujie'] .msg-body,
+  html[data-theme='dongbei-yujie'] .rp-section {
+    transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
   }
 }

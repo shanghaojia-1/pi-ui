@@ -42,4 +42,13 @@ describe('window shell CSS (platform-gated drag strip)', () => {
   it('keeps the splash draggable on darwin while connecting', () => {
     expect(CSS).toMatch(/\.platform-darwin\.splash\s*\{[^}]*\-webkit-app-region:\s*drag\s*;/)
   })
+
+  it('keeps top-bar dropdowns above message cards that create stacking contexts', () => {
+    const topbar = CSS.match(/^\.topbar\s*\{[^}]*\}/m)?.[0]
+    const conversationRules = [...CSS.matchAll(/^\.conversation\s*\{[^}]*\}/gm)].map((match) => match[0])
+    expect(topbar).toContain('position: relative')
+    expect(topbar).toContain('z-index: 80')
+    expect(topbar).toContain('overflow: visible')
+    expect(conversationRules.some((rule) => rule.includes('position: relative') && rule.includes('z-index: 1'))).toBe(true)
+  })
 })

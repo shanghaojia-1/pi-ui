@@ -59,7 +59,7 @@ test.describe.serial('i18n + themes (isolated)', () => {
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
     const themeButtons = dialog.locator('.sett-theme')
-    await expect(themeButtons).toHaveCount(7) // system + 6
+    await expect(themeButtons).toHaveCount(8) // system + 7
 
     const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())
     const dataTheme = () => page.evaluate(() => document.documentElement.dataset.theme ?? null)
@@ -80,6 +80,11 @@ test.describe.serial('i18n + themes (isolated)', () => {
     expect(await dataTheme()).toBe('dongbei-yujie')
     await expect.poll(bg).toBe('#fff0f5')
     await expect(dialog.getByText('带派不老铁')).toBeVisible()
+
+    await dialog.locator('.sett-theme', { hasText: '桥本有菜' }).click()
+    expect(await dataTheme()).toBe('hashimoto-yuna')
+    await expect.poll(bg).toBe('#120e11')
+    await expect(dialog.getByText('黑樱桃 · 香槟金')).toBeVisible()
 
     // System mode clears the attribute and follows prefers-color-scheme.
     await page.emulateMedia({ colorScheme: 'dark' })

@@ -1,16 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ChevronRight } from 'lucide-react'
+import { Brain, ChevronRight, UserRound } from 'lucide-react'
 import type { ChatMessage, ImageBlock, TextBlock } from '@shared/contracts'
 import ToolCall from './ToolCall'
 import Markdown from './Markdown'
 import ImageLightbox from './Lightbox'
 import { useI18n } from '../lib/i18n'
+import { getThemeDefinition, useTheme } from '../lib/theme'
 
 const SUGGESTION_KEYS = [
   'messages.suggest.explore',
   'messages.suggest.test',
   'messages.suggest.review',
 ]
+
+const USER_AVATAR_PREVIEW = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d5aa7e"/><stop offset="1" stop-color="#8d5361"/></linearGradient></defs>
+    <rect width="256" height="256" rx="56" fill="#251c21"/>
+    <circle cx="128" cy="91" r="43" fill="url(#g)"/>
+    <path d="M48 224c7-51 36-78 80-78s73 27 80 78" fill="url(#g)"/>
+  </svg>
+`)}`
+
+const PI_AVATAR_PREVIEW = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d97b4a"/><stop offset="1" stop-color="#9c5a2b"/></linearGradient></defs>
+    <rect width="256" height="256" rx="56" fill="#211f1c"/>
+    <circle cx="128" cy="128" r="88" fill="url(#g)"/>
+    <text x="128" y="166" text-anchor="middle" font-family="Georgia,serif" font-size="126" font-weight="700" fill="white">π</text>
+  </svg>
+`)}`
 
 function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const { t } = useI18n()
@@ -75,6 +94,29 @@ function ImageAttachmentBlock({ block }: { block: ImageBlock }) {
   )
 }
 
+function MessageAvatar({ role }: { role: 'user' | 'assistant' }) {
+  const { t } = useI18n()
+  const { theme } = useTheme()
+  const [zoom, setZoom] = useState(false)
+  const label = role === 'user' ? t('messages.avatar.user') : t('messages.avatar.agent')
+  const src = role === 'user' ? USER_AVATAR_PREVIEW : (getThemeDefinition(theme).avatar ?? PI_AVATAR_PREVIEW)
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`msg-avatar msg-avatar-${role}`}
+        onClick={() => setZoom(true)}
+        aria-label={label}
+        title={label}
+      >
+        {role === 'user' ? <UserRound size={16} strokeWidth={2.2} aria-hidden="true" /> : <span className="msg-avatar-pi">π</span>}
+      </button>
+      {zoom ? <ImageLightbox src={src} alt={label} variant="avatar" onClose={() => setZoom(false)} /> : null}
+    </>
+  )
+}
+
 function Message({ message }: { message: ChatMessage }) {
   const { t } = useI18n()
   if (message.role === 'user') {
@@ -82,14 +124,17 @@ function Message({ message }: { message: ChatMessage }) {
     const images = message.blocks.filter((b): b is ImageBlock => b.type === 'image')
     return (
       <div className="msg msg-user">
-        <div className="msg-label">{t('common.you')}</div>
-        <div className="msg-body">
-          {images.map((b, i) => (
-            <ImageAttachmentBlock key={i} block={b} />
-          ))}
-          {text.map((b, i) => (
-            <Markdown key={i} text={b.text} className="msg-text" />
-          ))}
+        <MessageAvatar role="user" />
+        <div className="msg-content">
+          <div className="msg-label">{t('common.you')}</div>
+          <div className="msg-body">
+            {images.map((b, i) => (
+              <ImageAttachmentBlock key={i} block={b} />
+            ))}
+            {text.map((b, i) => (
+              <Markdown key={i} text={b.text} className="msg-text" />
+            ))}
+          </div>
         </div>
       </div>
     )
@@ -103,16 +148,20 @@ function Message({ message }: { message: ChatMessage }) {
 
   return (
     <div className="msg msg-assistant">
-      <div className="msg-label">Pi</div>      <div className="msg-body">
-        {message.blocks.map((block, i) => {
-          if (block.type === 'thinking') {
-            return <ThinkingBlock key={i} text={block.text} streaming={message.isStreaming === true} />
-          }
-          if (block.type === 'tool') return <ToolCall key={block.id} tool={block} />
-          if (block.type === 'image') return <ImageAttachmentBlock key={i} block={block} />
-          return block.text !== '' ? <Markdown key={i} text={block.text} /> : null
-        })}
-        {message.isStreaming === true ? <span className="msg-cursor" aria-hidden="true" /> : null}
+      <MessageAvatar role="assistant" />
+      <div className="msg-content">
+        <div className="msg-label">Pi</div>
+        <div className="msg-body">
+          {message.blocks.map((block, i) => {
+            if (block.type === 'thinking') {
+              return <ThinkingBlock key={i} text={block.text} streaming={message.isStreaming === true} />
+            }
+            if (block.type === 'tool') return <ToolCall key={block.id} tool={block} />
+            if (block.type === 'image') return <ImageAttachmentBlock key={i} block={block} />
+            return block.text !== '' ? <Markdown key={i} text={block.text} /> : null
+          })}
+          {message.isStreaming === true ? <span className="msg-cursor" aria-hidden="true" /> : null}
+        </div>
       </div>
     </div>
   )
@@ -194,12 +243,15 @@ export default function MessageList({ messages, pendingText, workspaceName, onSu
       ))}
       {pendingText !== null ? (
         <div className="msg msg-user">
-          <div className="msg-label">{t('common.you')}</div>
-          <div className="msg-body">
-            <p className="msg-text">
-              {pendingText}
-              <span className="msg-pending" aria-hidden="true" />
-            </p>
+          <MessageAvatar role="user" />
+          <div className="msg-content">
+            <div className="msg-label">{t('common.you')}</div>
+            <div className="msg-body">
+              <p className="msg-text">
+                {pendingText}
+                <span className="msg-pending" aria-hidden="true" />
+              </p>
+            </div>
           </div>
         </div>
       ) : null}
