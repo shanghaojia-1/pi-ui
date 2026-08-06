@@ -3,6 +3,7 @@ import { FolderOpen, LoaderCircle, TriangleAlert, X } from 'lucide-react'
 import type { AppInfo, AppSnapshot, DynamicCommand, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
 import { errorMessage, useMediaQuery, useSnapshot } from './hooks'
 import { formatCost, formatTokens } from './lib/format'
+import { shortcut } from './lib/shortcuts'
 import { useI18n } from './lib/i18n'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
@@ -361,7 +362,7 @@ export default function App() {
                 <FolderOpen size={15} aria-hidden="true" />
                 {t('app.emptyWorkspace.open')}
               </button>
-              <p className="shortcut-hint">{t('app.shortcut.openDir')}</p>
+              <p className="shortcut-hint">{t('app.shortcut.openDir', { kbd: shortcut('⇧⌘O', 'Ctrl+Shift+O') })}</p>
             </div>
           ) : (
             <>

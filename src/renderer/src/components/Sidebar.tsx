@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Folder, FolderOpen, MessageSquare, Plus, Settings, Trash2 } from 'lucide-react'
 import type { AppSnapshot, SessionListItem } from '@shared/contracts'
 import { formatTime, sessionGroup } from '../lib/format'
+import { shortcut } from '../lib/shortcuts'
 import { useI18n } from '../lib/i18n'
 
 interface SidebarProps {
@@ -64,7 +65,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
         <button type="button" className="btn" onClick={onOpenDir} disabled={busy}>
           <FolderOpen size={14} aria-hidden="true" />
           <span>{t('sidebar.openDir')}</span>
-          <kbd>⇧⌘O</kbd>
+          <kbd>{shortcut('⇧⌘O', 'Ctrl+Shift+O')}</kbd>
         </button>
         <button
           type="button"
@@ -74,7 +75,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
         >
           <Plus size={14} aria-hidden="true" />
           <span>{t('sidebar.newTask')}</span>
-          <kbd>⌘N</kbd>
+          <kbd>{shortcut('⌘N', 'Ctrl+N')}</kbd>
         </button>
       </div>
 
@@ -108,6 +109,12 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
                         <span className="session-time">{formatTime(item.modifiedAt)}</span>
                       </span>
                       <span className="session-preview">{item.preview}</span>
+                      {item.workspace ? (
+                        <span className="session-ws" title={item.workspace.path}>
+                          <Folder size={10} className="session-ws-icon" aria-hidden="true" />
+                          <span className="session-ws-name">{item.workspace.name}</span>
+                        </span>
+                      ) : null}
                       <span className="session-meta">{t('sidebar.messages', { n: item.messageCount })}</span>
                     </button>
                     <button

@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   createAgentSession: vi.fn(),
   getAgentDir: vi.fn(),
   ModelRuntime: { create: vi.fn() },
-  SessionManager: { create: vi.fn(), open: vi.fn(), list: vi.fn() },
+  SessionManager: { create: vi.fn(), open: vi.fn(), list: vi.fn(), listAll: vi.fn() },
   DefaultResourceLoader: vi.fn(),
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
 }))
@@ -144,7 +144,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   mocks.getAgentDir.mockReturnValue(agentDir)
   mocks.ModelRuntime.create.mockResolvedValue({ getAvailable: async () => [], getModel: () => null })
-  mocks.SessionManager.list.mockResolvedValue([])
+  mocks.SessionManager.listAll.mockResolvedValue([])
   mocks.SessionManager.create.mockImplementation((path: string) => ({ getSessionDir: () => path }))
   mocks.SessionManager.open.mockReturnValue({})
   mocks.createAgentSession.mockResolvedValue({ session: new FakeSession(), modelFallbackMessage: undefined })
@@ -609,6 +609,19 @@ describe('dispose and workspace switching', () => {
 })
 
 describe('handleEvent', () => {
+  it('surfaces provider errors from empty assistant messages', async () => {
+    const session = new FakeSession()
+    session.messages = [{
+      role: 'assistant', timestamp: 1000, stopReason: 'error', content: [],
+      errorMessage: '400: provider rejected the developer role',
+    }]
+    const runtime = await initRuntime(undefined, session)
+
+    expect(runtime.snapshot().messages[0]?.blocks).toEqual([
+      { type: 'text', text: '400: provider rejected the developer role' },
+    ])
+  })
+
   it('accumulates tool state across start/update/end and surfaces edit patches in the snapshot', async () => {
     const session = new FakeSession()
     session.messages = [{
@@ -649,7 +662,7 @@ describe('handleEvent', () => {
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason) }
     process.on('unhandledRejection', onUnhandled)
     try {
-      mocks.SessionManager.list.mockRejectedValueOnce(new Error('list boom'))
+      mocks.SessionManager.listAll.mockRejectedValueOnce(new Error('list boom'))
       priv(runtime).handleEvent({ type: 'agent_settled' } as unknown as AgentSessionEvent)
       await flush()
       const snap = runtime.snapshot()
