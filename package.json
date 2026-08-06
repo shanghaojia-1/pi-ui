@@ -109,7 +109,6 @@
       "maintainer": "Earendil Works",
       "executableName": "pi-studio",
       "synopsis": "A focused desktop GUI for Pi coding agent",
-      "desktopName": "pi-studio.desktop",
       "syncDesktopName": true,
       "target": [
         "AppImage"
