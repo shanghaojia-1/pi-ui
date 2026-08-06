@@ -1,33 +1,367 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type ReactNode } from 'react'
+import dongbeiYujieAvatar from '../assets/dongbei-yujie-avatar.png'
+import dongbeiYujieArtwork from '../assets/dongbei-yujie-theme.png'
+import hashimotoYunaAvatar from '../assets/hashimoto-yuna-avatar.png'
+import hashimotoYunaArtwork from '../assets/hashimoto-yuna-theme-v2.png'
+import mikamiYuaAvatar from '../assets/mikami-yua-avatar.png'
+import mikamiYuaArtwork from '../assets/mikami-yua-theme.png'
 
-export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest'
+export type ThemeId = 'system' | 'light' | 'dark' | 'sepia' | 'ocean' | 'forest' | 'dongbei-yujie' | 'hashimoto-yuna' | 'mikami-yua'
 
-export const THEMES: { id: ThemeId; labelKey: string; swatch: string }[] = [
-  { id: 'system', labelKey: 'settings.theme.system', swatch: 'linear-gradient(135deg, #f6f4f1 50%, #1d1c1a 50%)' },
-  { id: 'light', labelKey: 'settings.theme.light', swatch: '#f6f4f1' },
-  { id: 'dark', labelKey: 'settings.theme.dark', swatch: '#1d1c1a' },
-  { id: 'sepia', labelKey: 'settings.theme.sepia', swatch: '#f3ead8' },
-  { id: 'ocean', labelKey: 'settings.theme.ocean', swatch: '#0f2438' },
-  { id: 'forest', labelKey: 'settings.theme.forest', swatch: '#eef3ea' },
-]
+type ThemeVariable =
+  | '--bg'
+  | '--bg-panel'
+  | '--bg-elevated'
+  | '--bg-subtle'
+  | '--bg-hover'
+  | '--bg-active'
+  | '--border'
+  | '--border-strong'
+  | '--text'
+  | '--text-2'
+  | '--text-3'
+  | '--text-3-strong'
+  | '--accent'
+  | '--accent-strong'
+  | '--accent-soft'
+  | '--green'
+  | '--green-soft'
+  | '--red'
+  | '--red-soft'
+  | '--amber'
+  | '--amber-soft'
+  | '--blue'
+  | '--blue-soft'
+
+type ThemeVariables = Readonly<Record<ThemeVariable, string>>
+
+export interface ThemeDefinition {
+  readonly id: ThemeId
+  readonly labelKey: string
+  readonly hintKey?: string
+  readonly swatch: string
+  readonly colorScheme: 'light' | 'dark'
+  readonly variables: ThemeVariables
+  readonly artwork?: string
+  readonly artworkPosition?: string
+  readonly artworkOpacity?: number
+  readonly avatar?: string
+  readonly avatarPosition?: string
+  readonly quote?: string
+}
+
+const LIGHT: ThemeVariables = {
+  '--bg': '#f6f4f1',
+  '--bg-panel': '#fbfaf8',
+  '--bg-elevated': '#ffffff',
+  '--bg-subtle': '#efede8',
+  '--bg-hover': '#e9e6df',
+  '--bg-active': '#e3dfd6',
+  '--border': '#e3e0d8',
+  '--border-strong': '#cec9bf',
+  '--text': '#2c2a26',
+  '--text-2': '#6d695f',
+  '--text-3': '#a19b8f',
+  '--text-3-strong': '#8a857a',
+  '--accent': '#bf5b2c',
+  '--accent-strong': '#a64a20',
+  '--accent-soft': '#f6e7dd',
+  '--green': '#4d7c4f',
+  '--green-soft': '#e7f0e4',
+  '--red': '#b6452f',
+  '--red-soft': '#f6e3de',
+  '--amber': '#a67c1b',
+  '--amber-soft': '#f5ecd7',
+  '--blue': '#386fa0',
+  '--blue-soft': '#e3edf5',
+}
+
+const DARK: ThemeVariables = {
+  '--bg': '#1d1c1a',
+  '--bg-panel': '#21201e',
+  '--bg-elevated': '#262522',
+  '--bg-subtle': '#2a2925',
+  '--bg-hover': '#31302c',
+  '--bg-active': '#383631',
+  '--border': '#33312d',
+  '--border-strong': '#45423c',
+  '--text': '#e8e5df',
+  '--text-2': '#a7a297',
+  '--text-3': '#6f6a61',
+  '--text-3-strong': '#8b857a',
+  '--accent': '#d97b4a',
+  '--accent-strong': '#e89a6e',
+  '--accent-soft': '#3d2a20',
+  '--green': '#82b184',
+  '--green-soft': '#222f1f',
+  '--red': '#e0806a',
+  '--red-soft': '#3a2420',
+  '--amber': '#d3a64f',
+  '--amber-soft': '#332b19',
+  '--blue': '#7fa8cc',
+  '--blue-soft': '#1f2b36',
+}
+
+const SEPIA: ThemeVariables = {
+  '--bg': '#f3ead8',
+  '--bg-panel': '#f8f1e2',
+  '--bg-elevated': '#fdf8ec',
+  '--bg-subtle': '#ede2cb',
+  '--bg-hover': '#e7d9bd',
+  '--bg-active': '#dfcfae',
+  '--border': '#e0d2b4',
+  '--border-strong': '#c8b78e',
+  '--text': '#3d3627',
+  '--text-2': '#7c7157',
+  '--text-3': '#a89b7c',
+  '--text-3-strong': '#948763',
+  '--accent': '#9c5a2b',
+  '--accent-strong': '#7f471f',
+  '--accent-soft': '#f0e2cc',
+  '--green': '#5f7040',
+  '--green-soft': '#e6e8d2',
+  '--red': '#a3482f',
+  '--red-soft': '#f0ddd4',
+  '--amber': '#93711e',
+  '--amber-soft': '#efe6c6',
+  '--blue': '#48697d',
+  '--blue-soft': '#dde6e9',
+}
+
+const OCEAN: ThemeVariables = {
+  '--bg': '#0e1e2f',
+  '--bg-panel': '#122437',
+  '--bg-elevated': '#162a3f',
+  '--bg-subtle': '#1a3048',
+  '--bg-hover': '#1f3751',
+  '--bg-active': '#253f5c',
+  '--border': '#233b55',
+  '--border-strong': '#31506f',
+  '--text': '#dbe7f2',
+  '--text-2': '#93a8bd',
+  '--text-3': '#5d748c',
+  '--text-3-strong': '#7890a8',
+  '--accent': '#4fa3d9',
+  '--accent-strong': '#7cc0ea',
+  '--accent-soft': '#17324a',
+  '--green': '#6fbf8f',
+  '--green-soft': '#152e24',
+  '--red': '#e07a6a',
+  '--red-soft': '#3a2320',
+  '--amber': '#d4ab4f',
+  '--amber-soft': '#332b17',
+  '--blue': '#6fa8d9',
+  '--blue-soft': '#15283c',
+}
+
+const FOREST: ThemeVariables = {
+  '--bg': '#eef3ea',
+  '--bg-panel': '#f6f9f3',
+  '--bg-elevated': '#fdfefb',
+  '--bg-subtle': '#e4ecdf',
+  '--bg-hover': '#dce7d5',
+  '--bg-active': '#d3e0ca',
+  '--border': '#d8e2d0',
+  '--border-strong': '#bfd0b3',
+  '--text': '#28302a',
+  '--text-2': '#5f6f5d',
+  '--text-3': '#93a38f',
+  '--text-3-strong': '#7d8d78',
+  '--accent': '#4f7a3f',
+  '--accent-strong': '#3d622f',
+  '--accent-soft': '#e2eedb',
+  '--green': '#4d7c4f',
+  '--green-soft': '#e2efe0',
+  '--red': '#a8482f',
+  '--red-soft': '#f0e0d8',
+  '--amber': '#96811f',
+  '--amber-soft': '#efe9cc',
+  '--blue': '#46738f',
+  '--blue-soft': '#dfeaf0',
+}
+
+const DONG_BEI_YUJIE: ThemeVariables = {
+  '--bg': '#fff0f5',
+  '--bg-panel': '#fff8fb',
+  '--bg-elevated': '#ffffff',
+  '--bg-subtle': '#ffe3ee',
+  '--bg-hover': '#ffd6e5',
+  '--bg-active': '#ffc5da',
+  '--border': '#f3bfd2',
+  '--border-strong': '#e898b5',
+  '--text': '#54283b',
+  '--text-2': '#8b5268',
+  '--text-3': '#b9899b',
+  '--text-3-strong': '#a36b82',
+  '--accent': '#e65387',
+  '--accent-strong': '#c83268',
+  '--accent-soft': '#ffe0ec',
+  '--green': '#5b906c',
+  '--green-soft': '#e3f2e7',
+  '--red': '#c94a5b',
+  '--red-soft': '#ffe1e5',
+  '--amber': '#b98728',
+  '--amber-soft': '#fff0cf',
+  '--blue': '#4d7ea6',
+  '--blue-soft': '#e2f0fa',
+}
+
+const HASHIMOTO_YUNA: ThemeVariables = {
+  '--bg': '#120e11',
+  '--bg-panel': '#191317',
+  '--bg-elevated': '#251c21',
+  '--bg-subtle': '#302229',
+  '--bg-hover': '#3c2a32',
+  '--bg-active': '#493039',
+  '--border': '#3e2d34',
+  '--border-strong': '#654750',
+  '--text': '#f4eee9',
+  '--text-2': '#c9b9ae',
+  '--text-3': '#8f7c76',
+  '--text-3-strong': '#ad9790',
+  '--accent': '#d5aa7e',
+  '--accent-strong': '#f0c99e',
+  '--accent-soft': '#3c2a24',
+  '--green': '#7eae8c',
+  '--green-soft': '#1d3025',
+  '--red': '#e07882',
+  '--red-soft': '#3b2028',
+  '--amber': '#d5aa7e',
+  '--amber-soft': '#362a20',
+  '--blue': '#8da9c4',
+  '--blue-soft': '#202b36',
+}
+
+const MIKAMI_YUA: ThemeVariables = {
+  '--bg': '#eaf8ff',
+  '--bg-panel': '#f7fcff',
+  '--bg-elevated': '#ffffff',
+  '--bg-subtle': '#dff3ff',
+  '--bg-hover': '#ccecff',
+  '--bg-active': '#b9e3fa',
+  '--border': '#b9ddec',
+  '--border-strong': '#82bdd7',
+  '--text': '#17384c',
+  '--text-2': '#4f7185',
+  '--text-3': '#86a5b6',
+  '--text-3-strong': '#6e91a4',
+  '--accent': '#0b94d8',
+  '--accent-strong': '#0876af',
+  '--accent-soft': '#d5f1ff',
+  '--green': '#399b82',
+  '--green-soft': '#dcf4ed',
+  '--red': '#db6874',
+  '--red-soft': '#ffe5e8',
+  '--amber': '#b8842d',
+  '--amber-soft': '#fff1d7',
+  '--blue': '#168dcc',
+  '--blue-soft': '#d9f1fd',
+}
 
 /**
- * Theme selection:
- * - 'system': follow the OS via prefers-color-scheme (no data-theme attribute;
- *   the CSS `:root:not([data-theme])` media query decides light/dark).
- * - any other id: set `data-theme` on <html>; CSS `[data-theme='id']` blocks
- *   override every variable, and the media query no longer applies because
- *   the attribute is present.
- * Persisted in localStorage (UI preference, not a Pi setting).
+ * The theme catalog is the single source of truth for labels, swatches,
+ * tokens, and optional artwork. New themes must also provide translations,
+ * scoped component styling, assets, and tests. Follow
+ * docs/THEME_DEVELOPMENT.md for the complete implementation contract.
  */
+export const THEMES: readonly ThemeDefinition[] = [
+  {
+    id: 'system',
+    labelKey: 'settings.theme.system',
+    swatch: 'linear-gradient(135deg, #f6f4f1 50%, #1d1c1a 50%)',
+    colorScheme: 'light',
+    variables: LIGHT,
+  },
+  { id: 'light', labelKey: 'settings.theme.light', swatch: '#f6f4f1', colorScheme: 'light', variables: LIGHT },
+  { id: 'dark', labelKey: 'settings.theme.dark', swatch: '#1d1c1a', colorScheme: 'dark', variables: DARK },
+  { id: 'sepia', labelKey: 'settings.theme.sepia', swatch: '#f3ead8', colorScheme: 'light', variables: SEPIA },
+  { id: 'ocean', labelKey: 'settings.theme.ocean', swatch: '#0f2438', colorScheme: 'dark', variables: OCEAN },
+  { id: 'forest', labelKey: 'settings.theme.forest', swatch: '#eef3ea', colorScheme: 'light', variables: FOREST },
+  {
+    id: 'dongbei-yujie',
+    labelKey: 'settings.theme.dongbeiYujie',
+    hintKey: 'settings.theme.dongbeiYujieHint',
+    swatch: 'linear-gradient(135deg, #ffb5cf 0%, #e65387 52%, #ffd8e7 52%, #fff0f5 100%)',
+    colorScheme: 'light',
+    variables: DONG_BEI_YUJIE,
+    artwork: dongbeiYujieArtwork,
+    artworkPosition: 'center center',
+    artworkOpacity: 0.92,
+    avatar: dongbeiYujieAvatar,
+    avatarPosition: 'center 34%',
+    quote: '带派不老铁 · Pi Agent',
+  },
+  {
+    id: 'hashimoto-yuna',
+    labelKey: 'settings.theme.hashimotoYuna',
+    hintKey: 'settings.theme.hashimotoYunaHint',
+    swatch: 'linear-gradient(135deg, #120e11 0%, #4a1728 58%, #d5aa7e 58%, #f0c99e 100%)',
+    colorScheme: 'dark',
+    variables: HASHIMOTO_YUNA,
+    artwork: hashimotoYunaArtwork,
+    artworkPosition: 'right center',
+    artworkOpacity: 1,
+    avatar: hashimotoYunaAvatar,
+    avatarPosition: 'center 34%',
+    quote: 'Black Cherry · Pi Agent',
+  },
+  {
+    id: 'mikami-yua',
+    labelKey: 'settings.theme.mikamiYua',
+    hintKey: 'settings.theme.mikamiYuaHint',
+    swatch: 'linear-gradient(135deg, #0b94d8 0%, #69c9f2 58%, #ffffff 58%, #f29aa2 100%)',
+    colorScheme: 'light',
+    variables: MIKAMI_YUA,
+    artwork: mikamiYuaArtwork,
+    artworkPosition: 'right center',
+    artworkOpacity: 1,
+    avatar: mikamiYuaAvatar,
+    avatarPosition: 'center 34%',
+    quote: 'Aegean Blue · Pi Agent',
+  },
+]
+
+const THEME_BY_ID = new Map(THEMES.map((theme) => [theme.id, theme]))
 const STORAGE_KEY = 'pi-studio-theme'
+const SYSTEM_QUERY = '(prefers-color-scheme: dark)'
 
 function detectTheme(): ThemeId {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored !== null && THEMES.some((t) => t.id === stored)) return stored as ThemeId
-  } catch { /* ignore */ }
+    if (stored !== null && THEME_BY_ID.has(stored as ThemeId)) return stored as ThemeId
+  } catch {
+    // localStorage is unavailable in some embedded or privacy contexts.
+  }
   return 'system'
+}
+
+function systemPrefersDark(): boolean {
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(SYSTEM_QUERY).matches
+}
+
+export function getThemeDefinition(theme: ThemeId): ThemeDefinition {
+  return THEME_BY_ID.get(theme) ?? THEMES[0]!
+}
+
+function applyTheme(theme: ThemeId): void {
+  if (typeof document === 'undefined') return
+
+  const root = document.documentElement
+  const definition = theme === 'system'
+    ? (systemPrefersDark() ? getThemeDefinition('dark') : getThemeDefinition('light'))
+    : getThemeDefinition(theme)
+
+  if (theme === 'system') delete root.dataset.theme
+  else root.dataset.theme = theme
+
+  for (const [name, value] of Object.entries(definition.variables)) root.style.setProperty(name, value)
+  root.style.colorScheme = definition.colorScheme
+  root.style.setProperty('--theme-artwork', definition.artwork === undefined ? 'none' : `url(${JSON.stringify(definition.artwork)})`)
+  root.style.setProperty('--theme-artwork-position', definition.artworkPosition ?? 'center')
+  root.style.setProperty('--theme-artwork-opacity', String(definition.artworkOpacity ?? 0))
+  root.style.setProperty('--theme-avatar', definition.avatar === undefined ? 'none' : `url(${JSON.stringify(definition.avatar)})`)
+  root.style.setProperty('--theme-avatar-position', definition.avatarPosition ?? 'center')
+  root.style.setProperty('--theme-quote', definition.quote === undefined ? '""' : JSON.stringify(definition.quote))
 }
 
 interface ThemeContextValue {
@@ -45,13 +379,21 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = useCallback((next: ThemeId) => {
     setThemeState(next)
-    try { localStorage.setItem(STORAGE_KEY, next) } catch { /* ignore */ }
+    try {
+      localStorage.setItem(STORAGE_KEY, next)
+    } catch {
+      // The theme still applies for this session when persistence is blocked.
+    }
   }, [])
 
-  useEffect(() => {
-    const el = document.documentElement
-    if (theme === 'system') delete el.dataset.theme
-    else el.dataset.theme = theme
+  useLayoutEffect(() => {
+    applyTheme(theme)
+
+    if (theme !== 'system' || typeof window.matchMedia !== 'function') return undefined
+    const media = window.matchMedia(SYSTEM_QUERY)
+    const sync = () => applyTheme(theme)
+    media.addEventListener?.('change', sync)
+    return () => media.removeEventListener?.('change', sync)
   }, [theme])
 
   const value = useMemo(() => ({ theme, setTheme }), [theme, setTheme])

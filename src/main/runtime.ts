@@ -16,10 +16,10 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
-  ProviderConnectionTest, ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
+  ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
-import { isPlainObject, sanitizeErrorText } from '../shared/contracts'
+import { CUSTOM_PROVIDER_APIS, isPlainObject, sanitizeErrorText } from '../shared/contracts'
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 const APPROVAL_TOOLS = new Set(['bash', 'edit', 'write'])
@@ -295,6 +295,9 @@ export class PiRuntime {
   private telemetryRateKind: TelemetryInfo['tokenRateKind'] = 'unavailable'
   private ttftMs: number | null = null
   private latestOutputTokens: number | null = null
+  /** Rolling sample for incremental live-rate estimation. */
+  private lastTelemetryChars = 0
+  private lastTelemetryAt: number | null = null
   /**
    * Exact credential values submitted to the SDK this session (runtime API
    * keys), in memory only. Redaction targets for any error text that reaches
@@ -971,12 +974,130 @@ export class PiRuntime {
   }
 
   /**
+   * Existing provider config for the edit dialog (API key never returned).
+   * Reads models.json directly — the same file addCustomProvider writes. A
+   * pi built-in configured by key only (no baseUrl/models in models.json) is
+   * reported with builtin:true and its official endpoint looked up from the
+   * runtime so the edit dialog can show the official base URL.
+   */
+  getProviderConfig(providerId: string): Promise<ProviderEditConfig | null> {
+    try {
+      const modelsPath = join(getAgentDir(), 'models.json')
+      const raw = readFileSync(modelsPath, 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (!isPlainObject(parsed)) return Promise.resolve(null)
+      const providers = parsed.providers
+      if (!isPlainObject(providers)) return Promise.resolve(null)
+      const p = providers[providerId]
+      if (!isPlainObject(p)) return Promise.resolve(null)
+      let baseUrl = typeof p.baseUrl === 'string' ? p.baseUrl : ''
+      let builtin = false
+      if (baseUrl === '') {
+        // Key-only config for a pi built-in: fetch the official endpoint.
+        const runtimeProvider = this.modelRuntime?.getProviders().find((provider) => provider.id === providerId)
+        baseUrl = runtimeProvider?.baseUrl ?? ''
+        builtin = baseUrl !== ''
+      }
+      if (baseUrl === '') return Promise.resolve(null)
+      const api = CUSTOM_PROVIDER_APIS.includes(p.api as CustomProviderApi) ? (p.api as CustomProviderApi) : 'openai-completions'
+      const name = typeof p.name === 'string' && p.name !== providerId ? p.name : undefined
+      const models: { id: string; name?: string }[] = []
+      if (Array.isArray(p.models)) {
+        for (const model of p.models) {
+          if (!isPlainObject(model) || typeof model.id !== 'string') continue
+          models.push({ id: model.id, ...(typeof model.name === 'string' ? { name: model.name } : {}) })
+        }
+      }
+      return Promise.resolve({
+        id: providerId,
+        baseUrl,
+        api,
+        models,
+        hasApiKey: typeof p.apiKey === 'string' && p.apiKey.length > 0,
+        builtin,
+        ...(name !== undefined ? { name } : {}),
+      })
+    } catch {
+      return Promise.resolve(null)
+    }
+  }
+
+  /**
+   * Selectable provider types for the New-provider dialog: every pi built-in
+   * with an official endpoint, plus the user's own models.json providers
+   * (marked configured). URL-less credential providers (e.g. AWS Bedrock)
+   * are skipped — they need extra setup, not a plain API key.
+   */
+  getProviderTypes(): Promise<ProviderTypeInfo[]> {
+    const runtime = this.modelRuntime
+    if (!runtime) return Promise.resolve([])
+    const configured = new Set<string>()
+    try {
+      const raw = readFileSync(join(getAgentDir(), 'models.json'), 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (isPlainObject(parsed) && isPlainObject(parsed.providers)) {
+        for (const id of Object.keys(parsed.providers)) configured.add(id)
+      }
+    } catch { /* no models.json yet */ }
+    const types = runtime.getProviders()
+      .filter((provider) => typeof provider.baseUrl === 'string' && provider.baseUrl.length > 0)
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name || provider.id,
+        baseUrl: provider.baseUrl as string,
+        configured: configured.has(provider.id),
+      }))
+      .sort((a, b) => Number(a.configured) - Number(b.configured) || a.name.localeCompare(b.name))
+    return Promise.resolve(types)
+  }
+
+  /**
+   * Persists an API key for a provider in models.json (pi built-ins keep
+   * their official baseUrl/api/models catalog — only the key is stored here).
+   * Existing provider fields are preserved; the write is atomic.
+   */
+  saveProviderKey(providerId: string, apiKey: string): Promise<SettingsSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        if (apiKey.trim() === '') throw new Error('API key is required')
+        const modelsPath = join(getAgentDir(), 'models.json')
+        let data: { providers?: Record<string, unknown> } = {}
+        try {
+          const raw = readFileSync(modelsPath, 'utf8')
+          const parsed: unknown = JSON.parse(raw)
+          if (isPlainObject(parsed)) data = parsed as { providers?: Record<string, unknown> }
+        } catch {
+          data = {}
+        }
+        const providers: Record<string, unknown> = isPlainObject(data.providers) ? data.providers : {}
+        const existing = providers[providerId]
+        providers[providerId] = { ...(RECORD(existing) ? existing : {}), apiKey: apiKey.trim() }
+        const tmpPath = `${modelsPath}.tmp`
+        writeFileSync(tmpPath, JSON.stringify({ ...data, providers }, null, 2))
+        renameSync(tmpPath, modelsPath)
+        const runtime = this.modelRuntime
+        if (!runtime) throw new Error('Model runtime unavailable')
+        const result = await runtime.refresh({ allowNetwork: false })
+        await this.reloadModels()
+        if (result.errors.size > 0) throw new Error('Model refresh failed')
+        this.settingsError = null
+      } catch {
+        this.settingsError = { message: '保存 API Key 失败', recoverable: true }
+      }
+      this.emit()
+      return this.settingsSnapshot()
+    })
+  }
+
+  /**
    * Adds (or replaces) a custom provider in the agent's models.json, keeping
    * every existing provider entry intact, then reloads the model catalog from
    * disk. The write is atomic (tmp file + rename) so a crash can never leave
    * a truncated models.json; the tmp suffix is excluded from loading by the
    * config loader's file scan. The API key is written only when provided;
-   * otherwise the provider falls back to env/runtime keys.
+   * otherwise the provider falls back to env/runtime keys. Editing an existing
+   * provider keeps its stored key (when no new key is typed) and preserves the
+   * full stored config of any model whose id is unchanged.
    */
   addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot> {
     return this.enqueue(async () => {
@@ -993,17 +1114,30 @@ export class PiRuntime {
           data = {}
         }
         const providers: Record<string, unknown> = isPlainObject(data.providers) ? data.providers : {}
+        // Edit mode: keep the stored key when no new one is typed, and keep the
+        // full stored model config for models whose id is unchanged (context
+        // window, thinking maps, compat, …) instead of flattening them.
+        const previous = providers[config.id]
+        const previousKey = RECORD(previous) && typeof previous.apiKey === 'string' ? previous.apiKey : undefined
+        const previousModels: Record<string, unknown>[] =
+          RECORD(previous) && Array.isArray(previous.models)
+            ? previous.models.filter((m): m is Record<string, unknown> => RECORD(m) && typeof m.id === 'string')
+            : []
         providers[config.id] = {
           name: config.name && config.name !== config.id ? config.name : undefined,
           baseUrl: config.baseUrl,
           api: config.api,
-          apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : undefined,
-          models: config.models.map((m) => ({
-            id: m.id,
-            name: m.name && m.name !== m.id ? m.name : undefined,
-            input: m.input && m.input.length > 0 ? m.input : undefined,
-            contextWindow: m.contextWindow,
-          })),
+          apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : previousKey,
+          models: config.models.map((m) => {
+            const existing = previousModels.find((pm) => pm.id === m.id)
+            if (existing) return existing
+            return {
+              id: m.id,
+              name: m.name && m.name !== m.id ? m.name : undefined,
+              input: m.input && m.input.length > 0 ? m.input : undefined,
+              contextWindow: m.contextWindow,
+            }
+          }),
         }
         const tmpPath = `${modelsPath}.tmp`
         writeFileSync(tmpPath, JSON.stringify({ ...data, providers }, null, 2))
@@ -2001,6 +2135,8 @@ export class PiRuntime {
       this.telemetryRateKind = 'unavailable'
       this.ttftMs = null
       this.latestOutputTokens = null
+      this.lastTelemetryChars = 0
+      this.lastTelemetryAt = null
     }
     // Lock the turn's stable identity at message_start: its 0-based assistant
     // ordinal (see liveOrdinalInSession — the SDK may already hold the
@@ -2072,15 +2208,24 @@ export class PiRuntime {
   private contentChars(message: Record<string, unknown>): number {
     if (!Array.isArray(message.content)) return 0
     return message.content.reduce<number>((sum, part) => {
-      if (!RECORD(part) || (part.type !== 'text' && part.type !== 'thinking') || typeof part.text !== 'string') return sum
-      return sum + part.text.length
+      if (!RECORD(part) || (part.type !== 'text' && part.type !== 'thinking')) return sum
+      // The SDK emits thinking as { type:'thinking', thinking: string }
+      // (pi-ai ThinkingContent); older/other shapes may use `text`. Count it
+      // too so reasoning shows up in the live speed estimate.
+      const text = part.type === 'thinking'
+        ? (typeof part.thinking === 'string' ? part.thinking : typeof part.text === 'string' ? part.text : null)
+        : (typeof part.text === 'string' ? part.text : null)
+      if (text === null) return sum
+      return sum + text.length
     }, 0)
   }
 
   /**
    * Live-estimate telemetry for one cumulative message_update: the first
-   * streamed content fixes firstContentAt and TTFT; the token rate is a
-   * rough chars/4 estimate divided by the seconds since first content.
+   * streamed content fixes firstContentAt and TTFT. The token rate is the
+   * INCREMENTAL chars/4 rate since the previous update (EMA-smoothed), so
+   * streaming deltas — including thinking text — keep the number moving while
+   * the model is still reasoning, instead of a flat whole-turn average.
    */
   private updateLiveTelemetry(message: Record<string, unknown>): void {
     if (this.turnStartedAt === null) return
@@ -2090,12 +2235,25 @@ export class PiRuntime {
     if (this.firstContentAt === null) {
       this.firstContentAt = now
       this.ttftMs = Math.max(0, Math.round(now - this.turnStartedAt))
+      // Seed the rolling sample so the next deltas have a baseline.
+      this.lastTelemetryChars = chars
+      this.lastTelemetryAt = now
+      return
     }
-    const elapsedSec = (now - this.firstContentAt) / 1000
-    if (elapsedSec > 0) {
-      this.telemetryRate = (chars / 4) / elapsedSec
-      this.telemetryRateKind = 'live-estimate'
+    const prevAt = this.lastTelemetryAt
+    if (prevAt !== null) {
+      const deltaSec = (now - prevAt) / 1000
+      const deltaChars = chars - this.lastTelemetryChars
+      if (deltaChars > 0 && deltaSec > 0) {
+        const instant = (deltaChars / 4) / deltaSec
+        this.telemetryRate = this.telemetryRate === null
+          ? instant
+          : instant * 0.6 + this.telemetryRate * 0.4
+        this.telemetryRateKind = 'live-estimate'
+      }
     }
+    this.lastTelemetryChars = chars
+    this.lastTelemetryAt = now
   }
 
   /**
@@ -2136,6 +2294,8 @@ export class PiRuntime {
     this.telemetryRateKind = 'unavailable'
     this.ttftMs = null
     this.latestOutputTokens = null
+    this.lastTelemetryChars = 0
+    this.lastTelemetryAt = null
   }
 
   /**

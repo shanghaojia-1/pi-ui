@@ -12,6 +12,7 @@ import Composer, { type ComposerHandle } from './components/Composer'
 import RightPanel from './components/RightPanel'
 import SettingsPanel from './components/SettingsPanel'
 import TelemetryBar from './components/TelemetryBar'
+import { getThemeDefinition, useTheme } from './lib/theme'
 
 // Host platform comes from the preload contract (never sniffed from userAgent).
 const platform = window.desktop?.platform ?? 'other'
@@ -19,6 +20,7 @@ const isMac = platform === 'darwin'
 
 export default function App() {
   const { t } = useI18n()
+  const { theme } = useTheme()
   const { snapshot, loadError } = useSnapshot()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
@@ -36,6 +38,7 @@ export default function App() {
   const composerRef = useRef<ComposerHandle>(null)
   const snapRef = useRef<AppSnapshot | null>(snapshot)
   snapRef.current = snapshot
+  const splashTheme = getThemeDefinition(theme)
 
   const narrow = useMediaQuery('(max-width: 1080px)')
   const compact = useMediaQuery('(max-width: 780px)')
@@ -253,20 +256,32 @@ export default function App() {
   if (snapshot === null) {
     return (
       <div className={`splash${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
-        {loadError === null ? (
-          <>
-            <LoaderCircle size={26} className="splash-spin" aria-hidden="true" />
-            <p>{t('app.splash.connecting')}</p>
-          </>
-        ) : (
-          <>
-            <TriangleAlert size={26} aria-hidden="true" />
-            <p>{t('app.splash.failed')}{loadError}</p>
-            <button type="button" className="btn" onClick={() => window.location.reload()}>
-              {t('common.retry')}
-            </button>
-          </>
-        )}
+        <div className="splash-glow splash-glow-one" aria-hidden="true" />
+        <div className="splash-glow splash-glow-two" aria-hidden="true" />
+        <div className="splash-panel">
+          <div className="splash-mark" aria-hidden="true">
+            <span>π</span>
+          </div>
+          <div className="splash-eyebrow">PI AGENT</div>
+          <h1>{t('app.splash.title')}</h1>
+          <p className="splash-subtitle">{t('app.splash.subtitle')}</p>
+          {loadError === null ? (
+            <div className="splash-status" role="status" aria-live="polite">
+              <LoaderCircle size={17} className="splash-spin" aria-hidden="true" />
+              <span>{t('app.splash.connecting')}</span>
+              <span className="splash-dots" aria-hidden="true">•••</span>
+            </div>
+          ) : (
+            <div className="splash-error" role="alert">
+              <TriangleAlert size={17} aria-hidden="true" />
+              <p>{t('app.splash.failed')}{loadError}</p>
+              <button type="button" className="btn" onClick={() => window.location.reload()}>
+                {t('common.retry')}
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="splash-footer">{splashTheme.quote ?? t('app.splash.footer')}</div>
       </div>
     )
   }

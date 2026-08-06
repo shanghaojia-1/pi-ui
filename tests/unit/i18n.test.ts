@@ -45,8 +45,8 @@ describe('i18n dictionary', () => {
 })
 
 describe('theme catalog', () => {
-  it('offers system + five explicit themes', () => {
-    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest'])
+  it('offers system + eight explicit themes', () => {
+    expect(THEMES.map((t) => t.id)).toEqual(['system', 'light', 'dark', 'sepia', 'ocean', 'forest', 'dongbei-yujie', 'hashimoto-yuna', 'mikami-yua'])
   })
 
   it('every theme has a translated label and a swatch', () => {
@@ -55,5 +55,20 @@ describe('theme catalog', () => {
       expect(translate('en', theme.labelKey), theme.id).not.toBe(theme.labelKey)
       expect(theme.swatch.length).toBeGreaterThan(0)
     }
+    const dongbeiYujie = THEMES.find((theme) => theme.id === 'dongbei-yujie')
+    expect(dongbeiYujie?.hintKey).toBe('settings.theme.dongbeiYujieHint')
+    expect(dongbeiYujie?.quote).toBe('带派不老铁 · Pi Agent')
+    expect(dongbeiYujie?.artwork).toContain('dongbei-yujie-theme.png')
+    expect(dongbeiYujie?.avatar).toContain('dongbei-yujie-avatar.png')
+    const hashimotoYuna = THEMES.find((theme) => theme.id === 'hashimoto-yuna')
+    expect(hashimotoYuna?.hintKey).toBe('settings.theme.hashimotoYunaHint')
+    expect(hashimotoYuna?.artwork).toContain('hashimoto-yuna-theme-v2.png')
+    expect(hashimotoYuna?.avatar).toContain('hashimoto-yuna-avatar.png')
+    expect(hashimotoYuna?.colorScheme).toBe('dark')
+    const mikamiYua = THEMES.find((theme) => theme.id === 'mikami-yua')
+    expect(mikamiYua?.hintKey).toBe('settings.theme.mikamiYuaHint')
+    expect(mikamiYua?.artwork).toContain('mikami-yua-theme.png')
+    expect(mikamiYua?.avatar).toContain('mikami-yua-avatar.png')
+    expect(mikamiYua?.colorScheme).toBe('light')
   })
 })

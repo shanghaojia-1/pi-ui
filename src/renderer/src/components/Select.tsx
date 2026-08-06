@@ -7,10 +7,17 @@ export interface SelectOption {
   hint?: string
 }
 
+export interface SelectGroup {
+  label: string
+  options: SelectOption[]
+}
+
 interface SelectProps {
   label: string
   value: string | null
-  options: SelectOption[]
+  options?: SelectOption[]
+  /** Optional group headers (e.g. model picker grouped by provider). */
+  groups?: SelectGroup[]
   onChange: (value: string) => void
   disabled?: boolean
   width?: number
@@ -21,6 +28,7 @@ export default function Select({
   label,
   value,
   options,
+  groups,
   onChange,
   disabled = false,
   width,
@@ -28,7 +36,8 @@ export default function Select({
 }: SelectProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
-  const current = options.find((o) => o.value === value) ?? null
+  const flat = groups !== undefined ? groups.flatMap((g) => g.options.map((o) => ({ ...o, group: g.label }))) : (options ?? []).map((o) => ({ ...o, group: undefined }))
+  const current = flat.find((o) => o.value === value) ?? null
 
   useEffect(() => {
     if (!open) return
@@ -64,21 +73,27 @@ export default function Select({
       </button>
       {open && (
         <ul className="select-menu" role="listbox" aria-label={label}>
-          {options.map((o) => (
-            <li key={o.value} role="option" aria-selected={o.value === value}>
-              <button
-                type="button"
-                className="select-item"
-                onClick={() => {
-                  onChange(o.value)
-                  setOpen(false)
-                }}
-              >
-                <span className="select-item-label">{o.label}</span>
-                {o.hint !== undefined ? <span className="select-item-hint">{o.hint}</span> : null}
-              </button>
-            </li>
-          ))}
+          {flat.map((o, i) => {
+            const header = o.group !== undefined && (i === 0 || flat[i - 1]!.group !== o.group)
+            return (
+              <li key={o.value}>
+                {header ? <span className="select-group-label">{o.group}</span> : null}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={o.value === value}
+                  className="select-item"
+                  onClick={() => {
+                    onChange(o.value)
+                    setOpen(false)
+                  }}
+                >
+                  <span className="select-item-label">{o.label}</span>
+                  {o.hint !== undefined ? <span className="select-item-hint">{o.hint}</span> : null}
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>

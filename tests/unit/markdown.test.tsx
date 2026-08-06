@@ -360,5 +360,12 @@ describe('MessageList markdown wiring', () => {
     expect(assistant?.querySelector('.codeblock')).not.toBeNull()
     const user = container.querySelector('.msg-user .md')
     expect(user?.querySelector('strong')?.textContent).toBe('你好')
+    expect(container.querySelector('.msg-assistant .msg-avatar-assistant')).not.toBeNull()
+    expect(container.querySelector('.msg-user .msg-avatar-user')).not.toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '查看 Pi 头像' }))
+    expect(screen.getByRole('dialog', { name: '图片预览' })).toBeTruthy()
+    expect(screen.getByRole('img', { name: '查看 Pi 头像' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭图片预览' }))
   })
 })

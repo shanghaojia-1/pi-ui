@@ -60,12 +60,12 @@ test.describe.serial('i18n + themes (isolated)', () => {
     await page.getByRole('button', { name: '关闭设置' }).click()
   })
 
-  test('themes: five pickers apply data-theme and CSS variables', async () => {
+  test('themes: catalog pickers apply data-theme and CSS variables', async () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
     const themeButtons = dialog.locator('.sett-theme')
-    await expect(themeButtons).toHaveCount(6) // system + 5
+    await expect(themeButtons).toHaveCount(9) // system + 8
 
     const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())
     const dataTheme = () => page.evaluate(() => document.documentElement.dataset.theme ?? null)
@@ -81,6 +81,21 @@ test.describe.serial('i18n + themes (isolated)', () => {
     await dialog.locator('.sett-theme', { hasText: '羊皮纸' }).click()
     expect(await dataTheme()).toBe('sepia')
     await expect.poll(bg).toBe('#f3ead8')
+
+    await dialog.locator('.sett-theme', { hasText: '东北雨姐' }).click()
+    expect(await dataTheme()).toBe('dongbei-yujie')
+    await expect.poll(bg).toBe('#fff0f5')
+    await expect(dialog.getByText('带派不老铁')).toBeVisible()
+
+    await dialog.locator('.sett-theme', { hasText: '桥本有菜' }).click()
+    expect(await dataTheme()).toBe('hashimoto-yuna')
+    await expect.poll(bg).toBe('#120e11')
+    await expect(dialog.getByText('黑樱桃 · 香槟金')).toBeVisible()
+
+    await dialog.locator('.sett-theme', { hasText: '三上悠亚' }).click()
+    expect(await dataTheme()).toBe('mikami-yua')
+    await expect.poll(bg).toBe('#eaf8ff')
+    await expect(dialog.getByText('爱琴海 · 珍珠白')).toBeVisible()
 
     // System mode clears the attribute and follows prefers-color-scheme.
     await page.emulateMedia({ colorScheme: 'dark' })
