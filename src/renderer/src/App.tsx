@@ -302,6 +302,20 @@ export default function App() {
   const error = snapshot.error !== null && !dismissedError ? snapshot.error : null
   const totalTokens = snapshot.usage.input + snapshot.usage.output + snapshot.usage.cacheRead
 
+  // The runtime sends a raw English statusText; map the standard states to the
+  // (theme-aware) dictionary and keep backend details (e.g. "Skipped
+  // unopenable session") untouched.
+  const statusText =
+    snapshot.runState === 'running'
+      ? t('app.status.working')
+      : snapshot.runState === 'compacting'
+        ? t('app.status.compacting')
+        : snapshot.runState === 'retrying'
+          ? t('app.status.retrying')
+          : snapshot.runState === 'idle' && snapshot.statusText === 'Ready'
+            ? t('app.status.ready')
+            : snapshot.statusText
+
   const appStyle = {
     '--sidebar-w': sidebarOpen ? '248px' : '0px',
     '--right-w': rightOpen ? '344px' : '0px',
@@ -403,7 +417,7 @@ export default function App() {
         <footer className="statusbar">
           <span className={`status-dot${running ? ' running' : snapshot.runState === 'error' ? ' error' : ''}`} aria-hidden="true" />
           <span className="status-text" role="status">
-            {snapshot.statusText}
+            {statusText}
           </span>
           <span className="statusbar-right">
             {snapshot.queueCount > 0 ? <span className="status-queue">{t('app.status.queue', { n: snapshot.queueCount })}</span> : null}

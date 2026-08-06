@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { getCurrentThemeId, subscribeThemeId, THEME_COPY, type ThemeId } from './theme'
 
 export type Lang = 'zh' | 'en'
 
@@ -30,7 +31,7 @@ const DICT: Dict = {
   'app.status.ready': { zh: '就绪', en: 'Ready' },
   'app.status.working': { zh: 'Pi 正在工作…', en: 'Pi is working…' },
   'app.status.compacting': { zh: '正在压缩上下文…', en: 'Compacting context…' },
-  'app.status.retrying': { zh: '重试中（{n}/{max}）…', en: 'Retrying ({n}/{max})…' },
+  'app.status.retrying': { zh: '重试中…', en: 'Retrying…' },
   'app.status.queue': { zh: '队列 +{n}', en: 'Queue +{n}' },
   'app.about.title': { zh: '关于 {name}', en: 'About {name}' },
   'app.about.version': { zh: '版本', en: 'Version' },
@@ -241,9 +242,6 @@ const DICT: Dict = {
   'settings.theme.system': { zh: '跟随系统', en: 'System' },
   'settings.theme.light': { zh: '明亮', en: 'Light' },
   'settings.theme.dark': { zh: '暗黑', en: 'Dark' },
-  'settings.theme.sepia': { zh: '羊皮纸', en: 'Sepia' },
-  'settings.theme.ocean': { zh: '深海', en: 'Ocean' },
-  'settings.theme.forest': { zh: '森林', en: 'Forest' },
   'settings.theme.dongbeiYujie': { zh: '东北雨姐', en: 'Dongbei Yujie' },
   'settings.theme.dongbeiYujieHint': { zh: '带派不老铁', en: 'Bold and solid, old iron' },
   'settings.theme.hashimotoYuna': { zh: '桥本有菜', en: 'Arina Hashimoto' },
@@ -401,6 +399,9 @@ const I18nContext = createContext<I18nContextValue>({
 
 export function I18nProvider({ children, initialLang }: { children: ReactNode; initialLang?: Lang }) {
   const [lang, setLangState] = useState<Lang>(initialLang ?? detectLang)
+  // Re-render (and re-flavor copy) whenever the selected theme changes.
+  const [themeTick, setThemeTick] = useState(0)
+  useEffect(() => subscribeThemeId(() => setThemeTick((n) => n + 1)), [])
 
   const setLang = useCallback((next: Lang) => {
     setLangState(next)
@@ -410,8 +411,8 @@ export function I18nProvider({ children, initialLang }: { children: ReactNode; i
 
   const t = useCallback(
     (key: string, vars?: Record<string, string | number>): string => {
-      const entry = DICT[key]
-      let text = entry ? entry[lang] : key
+      const themed = THEME_COPY[getCurrentThemeId()]?.[key]
+      let text = themed ? themed[lang] : (DICT[key]?.[lang] ?? key)
       if (vars) {
         for (const [name, value] of Object.entries(vars)) {
           text = text.split(`{${name}}`).join(String(value))
@@ -419,7 +420,7 @@ export function I18nProvider({ children, initialLang }: { children: ReactNode; i
       }
       return text
     },
-    [lang],
+    [lang, themeTick],
   )
 
   useEffect(() => {
@@ -434,10 +435,10 @@ export function useI18n(): I18nContextValue {
   return useContext(I18nContext)
 }
 
-/** Tests: direct dict access. */
-export function translate(lang: Lang, key: string, vars?: Record<string, string | number>): string {
-  const entry = DICT[key]
-  let text = entry ? entry[lang] : key
+/** Tests: direct dict access; optional theme flavors the copy. */
+export function translate(lang: Lang, key: string, vars?: Record<string, string | number>, theme: ThemeId = 'system'): string {
+  const themed = THEME_COPY[theme]?.[key]
+  let text = themed ? themed[lang] : (DICT[key]?.[lang] ?? key)
   if (vars) {
     for (const [name, value] of Object.entries(vars)) {
       text = text.split(`{${name}}`).join(String(value))

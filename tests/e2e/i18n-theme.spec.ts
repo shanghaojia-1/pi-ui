@@ -19,7 +19,7 @@ test.describe.serial('i18n + themes (isolated)', () => {
     writeFileSync(join(tempWorkspace, 'README.md'), '# i18n\n')
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'en' } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
-    app = await _electron.launch({ args: ['/home/shj/桌面/pi-ui'], cwd: tempWorkspace, env })
+    app = await _electron.launch({ args: [process.cwd()], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
   })
@@ -59,37 +59,29 @@ test.describe.serial('i18n + themes (isolated)', () => {
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
     const themeButtons = dialog.locator('.sett-theme')
-    await expect(themeButtons).toHaveCount(9) // system + 8
+    await expect(themeButtons).toHaveCount(6) // system + light + dark + 3 persona
 
     const bg = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim())
     const dataTheme = () => page.evaluate(() => document.documentElement.dataset.theme ?? null)
-
-    await dialog.locator('.sett-theme', { hasText: '深海' }).click()
-    expect(await dataTheme()).toBe('ocean')
-    await expect.poll(bg).toBe('#0e1e2f')
-
-    await dialog.locator('.sett-theme', { hasText: '森林' }).click()
-    expect(await dataTheme()).toBe('forest')
-    await expect.poll(bg).toBe('#eef3ea')
-
-    await dialog.locator('.sett-theme', { hasText: '羊皮纸' }).click()
-    expect(await dataTheme()).toBe('sepia')
-    await expect.poll(bg).toBe('#f3ead8')
 
     await dialog.locator('.sett-theme', { hasText: '东北雨姐' }).click()
     expect(await dataTheme()).toBe('dongbei-yujie')
     await expect.poll(bg).toBe('#fff0f5')
     await expect(dialog.getByText('带派不老铁')).toBeVisible()
+    // Persona copy replaces the neutral sidebar labels right away.
+    await expect(page.getByRole('button', { name: '整新活儿' })).toBeVisible()
 
     await dialog.locator('.sett-theme', { hasText: '桥本有菜' }).click()
     expect(await dataTheme()).toBe('hashimoto-yuna')
     await expect.poll(bg).toBe('#120e11')
     await expect(dialog.getByText('黑樱桃 · 香槟金')).toBeVisible()
+    await expect(page.getByRole('button', { name: '新开一夜' })).toBeVisible()
 
     await dialog.locator('.sett-theme', { hasText: '三上悠亚' }).click()
     expect(await dataTheme()).toBe('mikami-yua')
     await expect.poll(bg).toBe('#eaf8ff')
     await expect(dialog.getByText('爱琴海 · 珍珠白')).toBeVisible()
+    await expect(page.getByRole('button', { name: '一起扬帆吧' })).toBeVisible()
 
     // System mode clears the attribute and follows prefers-color-scheme.
     await page.emulateMedia({ colorScheme: 'dark' })
@@ -98,10 +90,10 @@ test.describe.serial('i18n + themes (isolated)', () => {
     await expect.poll(bg).toBe('#1d1c1a')
 
     // UI selection persists to localStorage.
-    await dialog.locator('.sett-theme', { hasText: '深海' }).click()
+    await dialog.locator('.sett-theme', { hasText: '三上悠亚' }).click()
     const stored = await page.evaluate(() => localStorage.getItem('pi-studio-theme'))
-    expect(stored).toBe('ocean')
+    expect(stored).toBe('mikami-yua')
     await page.getByRole('button', { name: '关闭设置' }).click()
-    expect(await dataTheme()).toBe('ocean')
+    expect(await dataTheme()).toBe('mikami-yua')
   })
 })

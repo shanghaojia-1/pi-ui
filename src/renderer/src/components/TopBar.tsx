@@ -115,7 +115,8 @@ export default function TopBar({
           options={thinkingOptions}
           onChange={(v) => onSetThinking(v as ThinkingLevel)}
           disabled={!workspace}
-          width={104}
+          minWidth={104}
+          maxWidth={190}
         />
         <Select
           label={t('topbar.modelLabel')}

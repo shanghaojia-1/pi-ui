@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ChevronDown } from 'lucide-react'
 
 export interface SelectOption {
@@ -20,7 +20,11 @@ interface SelectProps {
   groups?: SelectGroup[]
   onChange: (value: string) => void
   disabled?: boolean
+  /** Fixed width in px (trigger content ellipsizes). */
   width?: number
+  /** Adaptive sizing: the trigger grows with its content, clamped between these. */
+  minWidth?: number
+  maxWidth?: number
   placeholder?: string
 }
 
@@ -32,6 +36,8 @@ export default function Select({
   onChange,
   disabled = false,
   width,
+  minWidth,
+  maxWidth,
   placeholder,
 }: SelectProps) {
   const [open, setOpen] = useState(false)
@@ -55,8 +61,15 @@ export default function Select({
     }
   }, [open])
 
+  const containerStyle: CSSProperties | undefined =
+    width !== undefined
+      ? { width }
+      : minWidth !== undefined || maxWidth !== undefined
+        ? { width: 'max-content', minWidth, maxWidth }
+        : undefined
+
   return (
-    <div className={`select${open ? ' select-open' : ''}`} ref={rootRef} style={width !== undefined ? { width } : undefined}>
+    <div className={`select${open ? ' select-open' : ''}`} ref={rootRef} style={containerStyle}>
       <button
         type="button"
         className="select-trigger"
