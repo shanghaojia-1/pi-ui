@@ -57,6 +57,20 @@ export interface CustomProviderConfig {
   models: { id: string; name?: string; input?: ('text' | 'image')[]; contextWindow?: number }[]
 }
 
+/**
+ * Existing provider config for the edit dialog. The stored API key is never
+ * returned — only whether one exists, so the UI can hint "keep the current key".
+ */
+export interface ProviderEditConfig {
+  id: string
+  /** Optional display name; falls back to `id`. */
+  name?: string
+  baseUrl: string
+  api: CustomProviderApi
+  models: { id: string; name?: string }[]
+  hasApiKey: boolean
+}
+
 const CUSTOM_PROVIDER_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
 const CUSTOM_MODEL_ID_MAX = 256
 
@@ -279,6 +293,7 @@ export interface PiDesktopApi {
   getAppInfo(): Promise<AppInfo>
   getDynamicCommands(): Promise<DynamicCommand[]>
   getExtensions(): Promise<ExtensionsInfo>
+  getProviderConfig(providerId: string): Promise<ProviderEditConfig | null>
   testProviderConnection(config: ProviderConnectionTest): Promise<ConnectionTestResult>
   sendPrompt(text: string, images?: ImageAttachment[]): Promise<void>
   abort(): Promise<void>
@@ -301,7 +316,7 @@ export const IPC = {
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
-  dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection',
+  dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   changed: 'pi:changed',
 } as const

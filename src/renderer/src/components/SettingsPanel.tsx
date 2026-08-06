@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { LoaderCircle, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
   CustomProviderApi,
@@ -83,6 +83,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
   // Custom-provider form (adds a provider to the agent's models.json).
   const [customOpen, setCustomOpen] = useState(false)
+  /** Provider id being edited (null = creating a new provider). */
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [customId, setCustomId] = useState('')
   const [customName, setCustomName] = useState('')
   const [customBaseUrl, setCustomBaseUrl] = useState('')
@@ -265,6 +267,49 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     setLive(null)
   }
 
+  /** Resets every New/Edit-provider form field (live message untouched). */
+  const resetCustomForm = (): void => {
+    setEditingId(null)
+    setCustomId('')
+    setCustomName('')
+    setCustomBaseUrl('')
+    setCustomApi('openai-completions')
+    setCustomApiKey('')
+    setCustomModels([])
+    setModelInput('')
+    setCustomImage(false)
+    setCustomType('custom')
+    setTestResult({ testing: false })
+  }
+
+  const openNewProvider = (): void => {
+    resetCustomForm()
+    setLive(null)
+    setCustomOpen(true)
+  }
+
+  /** Opens the edit dialog pre-filled from models.json (API key never shown). */
+  const openEditProvider = async (id: string): Promise<void> => {
+    resetCustomForm()
+    setLive(null)
+    try {
+      const config = await window.pi.getProviderConfig(id)
+      if (config === null) {
+        setLive({ kind: 'error', text: t('settings.providerLoadFailed') })
+        return
+      }
+      setEditingId(id)
+      setCustomId(config.id)
+      setCustomName(config.name ?? '')
+      setCustomBaseUrl(config.baseUrl)
+      setCustomApi(config.api)
+      setCustomModels(config.models.map((m) => ({ id: m.id })))
+      setCustomOpen(true)
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    }
+  }
+
   const saveCustom = async (): Promise<void> => {
     if (anyBusy) return
     const id = customId.trim()
@@ -297,17 +342,12 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       if (s.error !== null) {
         setLive({ kind: 'error', text: s.error.message })
       } else {
-        setLive({ kind: 'success', text: t('settings.customAdded', { name: customName.trim() !== '' ? customName.trim() : id }) })
-        // Reset and collapse the form; the provider list now includes it.
+        setLive({ kind: 'success', text: editingId !== null
+          ? t('settings.customUpdated', { name: customName.trim() !== '' ? customName.trim() : id })
+          : t('settings.customAdded', { name: customName.trim() !== '' ? customName.trim() : id }) })
+        // Reset and collapse the form; the provider list now reflects it.
         setCustomOpen(false)
-        setCustomId('')
-        setCustomName('')
-        setCustomBaseUrl('')
-        setCustomApiKey('')
-        setCustomModels([])
-        setModelInput('')
-        setCustomImage(false)
-        setTestResult({ testing: false })
+        resetCustomForm()
       }
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
@@ -537,10 +577,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     type="button"
                     className="btn btn-primary"
                     disabled={anyBusy}
-                    onClick={() => {
-                      setCustomOpen(true)
-                      setLive(null)
-                    }}
+                    onClick={openNewProvider}
                   >
                     <Plus size={13} aria-hidden="true" />
                     {t('settings.newProvider')}
@@ -561,7 +598,19 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                         <div className="sett-provider-card" key={p.id}>
                           <div className="sett-provider-card-line">
                             <span className="sett-provider-card-name" title={p.id}>{p.name}</span>
-                            <span className={`rp-auth rp-auth-${p.authStatus}`}>{t(AUTH_KEYS[p.authStatus])}</span>
+                            <span className="sett-provider-card-actions">
+                              <button
+                                type="button"
+                                className="btn-icon sett-provider-edit"
+                                aria-label={t('settings.editProvider')}
+                                title={t('settings.editProvider')}
+                                disabled={anyBusy}
+                                onClick={() => void openEditProvider(p.id)}
+                              >
+                                <Pencil size={11} aria-hidden="true" />
+                              </button>
+                              <span className={`rp-auth rp-auth-${p.authStatus}`}>{t(AUTH_KEYS[p.authStatus])}</span>
+                            </span>
                           </div>
                           <div className="sett-provider-card-sub">
                             <code>{p.id}</code>
@@ -810,36 +859,38 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
           className="stats-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={t('settings.customTitle')}
+          aria-label={t(editingId !== null ? 'settings.customTitleEdit' : 'settings.customTitle')}
           onClick={closeCustomModal}
         >
           <div className="stats-box sett-custom-modal" onClick={(e) => e.stopPropagation()}>
             <div className="stats-head">
-              <h3>{t('settings.customTitle')}</h3>
+              <h3>{t(editingId !== null ? 'settings.customTitleEdit' : 'settings.customTitle')}</h3>
               <button type="button" className="btn-icon" onClick={closeCustomModal} aria-label={t('common.close')}>
                 <X size={15} aria-hidden="true" />
               </button>
             </div>
             <p className="sett-hint">{t('settings.customHint')}</p>
-            {/* Provider type presets: pre-fill API flavor + common URL. */}
-            <div className="sett-field">
-              <label>{t('settings.providerType')}</label>
-              <div className="sett-type-row" role="radiogroup" aria-label={t('settings.providerType')}>
-                {PROVIDER_TYPES.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={customType === preset.id}
-                    className={`sett-type${customType === preset.id ? ' sett-type-active' : ''}`}
-                    onClick={() => selectProviderType(preset.id)}
-                  >
-                    {t(preset.labelKey)}
-                  </button>
-                ))}
+            {/* Provider type presets: pre-fill API flavor + common URL (new only). */}
+            {editingId === null ? (
+              <div className="sett-field">
+                <label>{t('settings.providerType')}</label>
+                <div className="sett-type-row" role="radiogroup" aria-label={t('settings.providerType')}>
+                  {PROVIDER_TYPES.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={customType === preset.id}
+                      className={`sett-type${customType === preset.id ? ' sett-type-active' : ''}`}
+                      onClick={() => selectProviderType(preset.id)}
+                    >
+                      {t(preset.labelKey)}
+                    </button>
+                  ))}
+                </div>
+                <span className="sett-field-hint">{t('settings.providerTypeHint')}</span>
               </div>
-              <span className="sett-field-hint">{t('settings.providerTypeHint')}</span>
-            </div>
+            ) : null}
             <div className="sett-custom-grid">
               <div className="sett-field">
                 <label htmlFor="custom-id">{t('settings.customId')}</label>
@@ -848,7 +899,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   className="sett-input"
                   placeholder={t('settings.customIdPh')}
                   value={customId}
-                  disabled={anyBusy}
+                  disabled={anyBusy || editingId !== null}
                   onChange={(e) => setCustomId(e.target.value)}
                 />
               </div>
@@ -897,7 +948,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   type="password"
                   className="sett-input"
                   autoComplete="new-password"
-                  placeholder={t('settings.customKeyPh')}
+                  placeholder={t(editingId !== null ? 'settings.customKeyKeepPh' : 'settings.customKeyPh')}
                   value={customApiKey}
                   disabled={anyBusy}
                   onChange={(e) => setCustomApiKey(e.target.value)}
@@ -970,7 +1021,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                 disabled={anyBusy}
                 onClick={() => void saveCustom()}
               >
-                {busy === 'custom' ? t('settings.addingProvider') : t('settings.addProvider')}
+                {busy === 'custom' ? t('settings.addingProvider') : t(editingId !== null ? 'settings.saveProvider' : 'settings.addProvider')}
               </button>
               <button type="button" className="btn" disabled={anyBusy} onClick={closeCustomModal}>
                 {t('common.cancel')}

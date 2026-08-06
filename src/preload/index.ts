@@ -45,6 +45,7 @@ const api: PiDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
   getDynamicCommands: () => ipcRenderer.invoke(IPC.dynamicCommands),
   getExtensions: () => ipcRenderer.invoke(IPC.extensions),
+  getProviderConfig: (providerId: string) => ipcRenderer.invoke(IPC.providerConfig, providerId),
   testProviderConnection: (config: ProviderConnectionTest) => ipcRenderer.invoke(IPC.testConnection, config),
   sendPrompt: (text: string, images?: ImageAttachment[]) => ipcRenderer.invoke(IPC.prompt, text, images),
   abort: () => ipcRenderer.invoke(IPC.abort),

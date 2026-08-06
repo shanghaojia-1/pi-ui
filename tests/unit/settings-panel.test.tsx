@@ -57,6 +57,7 @@ const api = {
   refreshModels: vi.fn(),
   setToolApprovalMode: vi.fn(),
   getExtensions: vi.fn().mockResolvedValue({ extensions: [], errors: [] }),
+  getProviderConfig: vi.fn(),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>
@@ -142,6 +143,42 @@ describe('SettingsPanel', () => {
   })
 
 
+
+
+
+
+
+  it('edit button opens the dialog pre-filled with the provider config (id locked)', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(
+      settings({
+        providers: [
+          { id: 'ollama', name: 'Local Ollama', authStatus: 'stored', authLabel: null, credentialType: 'api-key', availableModelCount: 2 },
+        ],
+      }),
+    )
+    vi.mocked(api.getProviderConfig).mockResolvedValue({
+      id: 'ollama',
+      name: 'Local Ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      api: 'openai-completions',
+      models: [{ id: 'llama3.1:8b' }, { id: 'qwen2.5' }],
+      hasApiKey: true,
+    })
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '编辑供应商' })).toBeTruthy())
+    // Pre-filled values from the provider config.
+    expect((screen.getByLabelText('提供商 ID（必填）') as HTMLInputElement).value).toBe('ollama')
+    expect((screen.getByLabelText('显示名称（可选）') as HTMLInputElement).value).toBe('Local Ollama')
+    expect((screen.getByLabelText('Base URL（必填）') as HTMLInputElement).value).toBe('http://localhost:11434/v1')
+    // Models arrive as chips; the id is locked while editing.
+    expect(screen.getByText('llama3.1:8b')).toBeTruthy()
+    expect(screen.getByText('qwen2.5')).toBeTruthy()
+    expect((screen.getByLabelText('提供商 ID（必填）') as HTMLInputElement).disabled).toBe(true)
+    // Key stays blank with a keep-current hint.
+    expect((screen.getByLabelText('API Key（可选）') as HTMLInputElement).value).toBe('')
+  })
 
 
 

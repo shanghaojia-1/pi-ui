@@ -15,10 +15,10 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
-  ProviderConnectionTest, ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
+  ProviderConnectionTest, ProviderEditConfig, ProviderStatus, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
-import { isPlainObject, sanitizeErrorText } from '../shared/contracts'
+import { CUSTOM_PROVIDER_APIS, isPlainObject, sanitizeErrorText } from '../shared/contracts'
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 const APPROVAL_TOOLS = new Set(['bash', 'edit', 'write'])
@@ -932,12 +932,50 @@ export class PiRuntime {
   }
 
   /**
+   * Existing provider config for the edit dialog (API key never returned).
+   * Reads models.json directly — the same file addCustomProvider writes.
+   */
+  getProviderConfig(providerId: string): Promise<ProviderEditConfig | null> {
+    try {
+      const modelsPath = join(getAgentDir(), 'models.json')
+      const raw = readFileSync(modelsPath, 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (!isPlainObject(parsed)) return Promise.resolve(null)
+      const providers = parsed.providers
+      if (!isPlainObject(providers)) return Promise.resolve(null)
+      const p = providers[providerId]
+      if (!isPlainObject(p) || typeof p.baseUrl !== 'string' || p.baseUrl === '') return Promise.resolve(null)
+      const api = CUSTOM_PROVIDER_APIS.includes(p.api as CustomProviderApi) ? (p.api as CustomProviderApi) : 'openai-completions'
+      const name = typeof p.name === 'string' && p.name !== providerId ? p.name : undefined
+      const models: { id: string; name?: string }[] = []
+      if (Array.isArray(p.models)) {
+        for (const model of p.models) {
+          if (!isPlainObject(model) || typeof model.id !== 'string') continue
+          models.push({ id: model.id, ...(typeof model.name === 'string' ? { name: model.name } : {}) })
+        }
+      }
+      return Promise.resolve({
+        id: providerId,
+        baseUrl: p.baseUrl,
+        api,
+        models,
+        hasApiKey: typeof p.apiKey === 'string' && p.apiKey.length > 0,
+        ...(name !== undefined ? { name } : {}),
+      })
+    } catch {
+      return Promise.resolve(null)
+    }
+  }
+
+  /**
    * Adds (or replaces) a custom provider in the agent's models.json, keeping
    * every existing provider entry intact, then reloads the model catalog from
    * disk. The write is atomic (tmp file + rename) so a crash can never leave
    * a truncated models.json; the tmp suffix is excluded from loading by the
    * config loader's file scan. The API key is written only when provided;
-   * otherwise the provider falls back to env/runtime keys.
+   * otherwise the provider falls back to env/runtime keys. Editing an existing
+   * provider keeps its stored key (when no new key is typed) and preserves the
+   * full stored config of any model whose id is unchanged.
    */
   addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot> {
     return this.enqueue(async () => {
@@ -954,17 +992,30 @@ export class PiRuntime {
           data = {}
         }
         const providers: Record<string, unknown> = isPlainObject(data.providers) ? data.providers : {}
+        // Edit mode: keep the stored key when no new one is typed, and keep the
+        // full stored model config for models whose id is unchanged (context
+        // window, thinking maps, compat, …) instead of flattening them.
+        const previous = providers[config.id]
+        const previousKey = RECORD(previous) && typeof previous.apiKey === 'string' ? previous.apiKey : undefined
+        const previousModels: Record<string, unknown>[] =
+          RECORD(previous) && Array.isArray(previous.models)
+            ? previous.models.filter((m): m is Record<string, unknown> => RECORD(m) && typeof m.id === 'string')
+            : []
         providers[config.id] = {
           name: config.name && config.name !== config.id ? config.name : undefined,
           baseUrl: config.baseUrl,
           api: config.api,
-          apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : undefined,
-          models: config.models.map((m) => ({
-            id: m.id,
-            name: m.name && m.name !== m.id ? m.name : undefined,
-            input: m.input && m.input.length > 0 ? m.input : undefined,
-            contextWindow: m.contextWindow,
-          })),
+          apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : previousKey,
+          models: config.models.map((m) => {
+            const existing = previousModels.find((pm) => pm.id === m.id)
+            if (existing) return existing
+            return {
+              id: m.id,
+              name: m.name && m.name !== m.id ? m.name : undefined,
+              input: m.input && m.input.length > 0 ? m.input : undefined,
+              contextWindow: m.contextWindow,
+            }
+          }),
         }
         const tmpPath = `${modelsPath}.tmp`
         writeFileSync(tmpPath, JSON.stringify({ ...data, providers }, null, 2))

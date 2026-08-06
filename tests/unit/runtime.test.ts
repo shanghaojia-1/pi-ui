@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2406,3 +2406,91 @@ describe('settings', () => {
     expect(privSecrets.knownSecretsByProvider.size).toBe(0)
   })
 })
+
+describe('custom provider config', () => {
+  it('getProviderConfig reads models.json without exposing the API key', async () => {
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: {
+        'my-ollama': {
+          name: 'Local Ollama',
+          baseUrl: 'http://localhost:11434/v1',
+          api: 'openai-completions',
+          apiKey: 'sk-secret',
+          models: [{ id: 'llama3.1:8b', name: 'Llama' }, { id: 'qwen' }],
+        },
+      },
+    }))
+    const runtime = await initRuntime()
+    const config = await runtime.getProviderConfig('my-ollama')
+    expect(config).toEqual({
+      id: 'my-ollama',
+      name: 'Local Ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      api: 'openai-completions',
+      models: [{ id: 'llama3.1:8b', name: 'Llama' }, { id: 'qwen' }],
+      hasApiKey: true,
+    })
+    expect(JSON.stringify(config)).not.toContain('sk-secret') // key never leaks
+  })
+
+  it('getProviderConfig returns null for unknown providers', async () => {
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { a: { baseUrl: 'http://x', api: 'openai-completions', models: [] } },
+    }))
+    const runtime = await initRuntime()
+    expect(await runtime.getProviderConfig('missing')).toBeNull()
+  })
+
+  it('addCustomProvider editing keeps the stored key and full model configs', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getAvailable: async () => [], getModel: () => null,
+      refresh: async () => ({ errors: new Map() }),
+    })
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: {
+        'my-ollama': {
+          baseUrl: 'http://localhost:11434/v1',
+          api: 'openai-completions',
+          apiKey: 'sk-original',
+          models: [
+            { id: 'llama3.1:8b', contextWindow: 128000, compat: { thinkingFormat: 'deepseek' } },
+            { id: 'qwen' },
+          ],
+        },
+      },
+    }))
+    const runtime = await initRuntime()
+    // Same id, new baseUrl, no new key: keeps llama3.1:8b (full config) and
+    // drops qwen, adds gpt-4o.
+    await runtime.addCustomProvider({
+      id: 'my-ollama',
+      name: 'Local Ollama',
+      baseUrl: 'http://localhost:11435/v1',
+      api: 'openai-completions',
+      models: [{ id: 'llama3.1:8b' }, { id: 'gpt-4o', name: 'GPT' }],
+    })
+    const written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
+    const provider = written.providers['my-ollama']
+    expect(provider.apiKey).toBe('sk-original') // preserved when no new key is typed
+    expect(provider.baseUrl).toBe('http://localhost:11435/v1')
+    expect(provider.models).toEqual([
+      { id: 'llama3.1:8b', contextWindow: 128000, compat: { thinkingFormat: 'deepseek' } },
+      { id: 'gpt-4o', name: 'GPT' },
+    ])
+  })
+
+  it('addCustomProvider with a new key replaces the stored one', async () => {
+    mocks.ModelRuntime.create.mockResolvedValue({
+      getAvailable: async () => [], getModel: () => null,
+      refresh: async () => ({ errors: new Map() }),
+    })
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify({
+      providers: { p: { baseUrl: 'http://x', api: 'openai-completions', apiKey: 'sk-old', models: [{ id: 'm' }] } },
+    }))
+    const runtime = await initRuntime()
+    await runtime.addCustomProvider({ id: 'p', baseUrl: 'http://x', api: 'openai-completions', apiKey: 'sk-new', models: [{ id: 'm' }] })
+    const written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
+    expect(written.providers.p.apiKey).toBe('sk-new')
+  })
+})
+
