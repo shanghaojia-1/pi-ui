@@ -1,0 +1,99 @@
+name: Build binaries
+
+# 推送 main 分支时自动打包各平台二进制文件，只保存为 Actions artifacts。
+# 也可以在 Actions 页面手动触发（workflow_dispatch）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: binary-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-mac:
+    name: macOS (x64 + arm64 zip)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # 不签名（identity: null），zip 目标来自 package.json 的 mac.target。
+      # --publish never 保证产物只保存为 Actions artifact。
+      - name: Package macOS zips
+        run: npx electron-builder --mac zip --x64 --arm64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-studio-mac-binaries
+          path: release/*.zip
+          if-no-files-found: error
+
+  build-win:
+    name: Windows (x64 zip)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # CLI 指定 zip 目标：electron-builder 按 package.json 的 artifactName 产出二进制文件。
+      - name: Package Windows zip
+        shell: bash
+        run: npx electron-builder --win zip --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-studio-win-binaries
+          path: release/*.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux (x64 AppImage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # AppImage 单文件可执行；目标只能在 Linux runner 上构建。
+      - name: Package Linux AppImage
+        run: npx electron-builder --linux AppImage --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pi-studio-linux-binaries
+          path: release/*.AppImage
+          if-no-files-found: error
