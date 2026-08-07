@@ -113,8 +113,11 @@ class FakeSession {
   sessionId = 'fake-session'
   sessionFile: string | null = null
   settingsManager: unknown = null
+  activeToolNames = ['read', 'bash', 'edit', 'write', 'subagent']
   subscribe = (): (() => void) => () => {}
   async bindExtensions(): Promise<void> {}
+  getActiveToolNames(): string[] { return [...this.activeToolNames] }
+  setActiveToolsByName(names: string[]): void { this.activeToolNames = [...names] }
   dispose(): void {}
   async setModel(): Promise<void> {}
   setThinkingLevel(): void {}

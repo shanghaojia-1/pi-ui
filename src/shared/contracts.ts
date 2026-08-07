@@ -95,7 +95,7 @@ export interface ProviderEditConfig {
   name?: string
   baseUrl: string
   api: CustomProviderApi
-  models: { id: string; name?: string }[]
+  models: { id: string; name?: string; input?: ('text' | 'image')[]; contextWindow?: number }[]
   hasApiKey: boolean
   /** True for a pi built-in configured by key only (no custom baseUrl/models). */
   builtin: boolean
@@ -153,6 +153,73 @@ export function isCustomProviderConfig(value: unknown): value is CustomProviderC
   }
   return true
 }
+export type SubagentTaskStatus =
+  | 'queued'
+  | 'starting'
+  | 'thinking'
+  | 'running_tool'
+  | 'streaming'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export interface SubagentUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  cost: number
+  contextTokens: number
+  turns: number
+}
+
+export interface SubagentEvent {
+  id: string
+  kind: 'lifecycle' | 'thinking' | 'message' | 'tool' | 'error'
+  status: 'running' | 'success' | 'error'
+  label: string
+  timestamp: number
+  toolName?: string
+  toolCallId?: string
+  args?: string
+  output?: string
+  text?: string
+}
+
+/** Version 1 fields remain optional-compatible with persisted legacy sessions. */
+export interface SubagentResult {
+  id?: string
+  agent: string
+  agentSource?: 'user' | 'project' | 'unknown'
+  task: string
+  status?: SubagentTaskStatus
+  exitCode: number
+  messages?: Array<{ role: string; content: unknown }>
+  events?: SubagentEvent[]
+  liveText?: string
+  output?: string
+  stderr?: string
+  usage?: Partial<SubagentUsage>
+  model?: string
+  stopReason?: string
+  errorMessage?: string
+  step?: number
+  startedAt?: number
+  finishedAt?: number
+  durationMs?: number
+}
+
+export interface SubagentDetails {
+  version?: 1 | 2
+  runId?: string
+  mode: 'single' | 'parallel' | 'chain'
+  agentScope?: string
+  projectAgentsDir?: string | null
+  total?: number
+  maxConcurrency?: number
+  results: SubagentResult[]
+}
+
 export interface ToolBlock {
   type: 'tool'
   id: string
@@ -162,6 +229,8 @@ export interface ToolBlock {
   output?: string
   patch?: string
   durationMs?: number
+  /** Structured tool payload (e.g. subagent results) for GUI-specific rendering. */
+  details?: unknown
 }
 export type MessageBlock = TextBlock | ImageBlock | ToolBlock
 export interface ChatMessage {
@@ -274,10 +343,33 @@ export interface ExtensionsInfo {
   errors: { path: string; error: string }[]
 }
 
+/** A user-level subagent definition (frontmatter + system prompt body). */
+export interface SubagentConfig {
+  name: string
+  description: string
+  tools?: string[]
+  model?: string
+  systemPrompt: string
+  /** Absolute file path of the definition (for display/identification). */
+  filePath: string
+}
+
+/** Editable fields of a subagent definition (name is the file key). */
+export interface SubagentEdit {
+  name: string
+  description: string
+  tools?: string[]
+  model?: string
+  systemPrompt: string
+}
+
 /** Payload for the provider connection test (Settings → New provider). */
 export interface ProviderConnectionTest {
+  /** Provider id being edited, when the test runs from the edit dialog. */
+  providerId?: string
   baseUrl: string
   api: CustomProviderApi
+  /** Typed key; when empty, main falls back to the stored models.json key. */
   apiKey?: string
 }
 
@@ -341,7 +433,7 @@ export interface PackagesInfo {
 /** Active pi engine: version, source and where it was loaded from. */
 export interface ActiveEngineInfo {
   version: string
-  source: 'builtin' | 'userdata'
+  source: 'userdata'
   path: string
 }
 
@@ -356,7 +448,7 @@ export interface EngineStatus {
   npm: { available: boolean; path: string | null }
   /** Directory external engines are installed into (for manual install hints). */
   installDir: string
-  /** Fixed-text reason when the external engine failed and builtin is used. */
+  /** Fixed-text reason why the configured engine could not be loaded. */
   error: string | null
 }
 
@@ -392,6 +484,8 @@ export interface PiDesktopApi {
   testProviderConnection(config: ProviderConnectionTest): Promise<ConnectionTestResult>
   sendPrompt(text: string, images?: ImageAttachment[]): Promise<void>
   abort(): Promise<void>
+  /** Cancels one active subagent task without stopping its siblings. */
+  cancelSubagent(taskId: string): Promise<boolean>
   setModel(provider: string, id: string): Promise<AppSnapshot>
   setThinking(level: ThinkingLevel): Promise<AppSnapshot>
   setToolApprovalMode(mode: ToolApprovalMode): Promise<SettingsSnapshot>
@@ -410,7 +504,7 @@ export interface PiDesktopApi {
   activateEngine(version: string): Promise<void>
   /** Removes an installed version (and its activation if active). */
   uninstallEngine(version: string): Promise<void>
-  /** Clears any external activation (back to the builtin engine). */
+  /** Clears the configured engine; next launch returns to first-run setup. */
   deactivateEngine(): Promise<void>
   getPackages(): Promise<PackagesInfo>
   /** Installs a package source (npm:name or git:url) and persists it to settings.json. */
@@ -421,12 +515,18 @@ export interface PiDesktopApi {
   removePackage(source: string): Promise<void>
   /** Sources with newer versions available on the registry. */
   checkPackageUpdates(): Promise<string[]>
+  /** User-level subagent definitions (~/.pi/agent/agents/*.md), sorted by name. */
+  listSubagents(): Promise<SubagentConfig[]>
+  /** Creates or overwrites a subagent definition; the name is the file key. */
+  saveSubagent(name: string, edit: SubagentEdit): Promise<SubagentConfig[]>
+  /** Deletes a subagent definition by name. */
+  deleteSubagent(name: string): Promise<SubagentConfig[]>
   onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void
 }
 
 export const IPC = {
   snapshot: 'pi:snapshot', chooseWorkspace: 'pi:choose-workspace', openWorkspace: 'pi:open-workspace',
-  newSession: 'pi:new-session', openSession: 'pi:open-session', deleteSession: 'pi:delete-session', prompt: 'pi:prompt', abort: 'pi:abort',
+  newSession: 'pi:new-session', openSession: 'pi:open-session', deleteSession: 'pi:delete-session', prompt: 'pi:prompt', abort: 'pi:abort', cancelSubagent: 'pi:cancel-subagent',
   model: 'pi:model', thinking: 'pi:thinking', settings: 'pi:settings', updateSettings: 'pi:update-settings',
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
@@ -436,6 +536,7 @@ export const IPC = {
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',
   packages: 'pi:packages', packageInstall: 'pi:package-install', packageUpdate: 'pi:package-update', packageRemove: 'pi:package-remove', packageCheck: 'pi:package-check',
+  subagents: 'pi:subagents', subagentSave: 'pi:subagent-save', subagentDelete: 'pi:subagent-delete',
   changed: 'pi:changed',
 } as const
 

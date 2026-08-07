@@ -56,6 +56,7 @@ const api: PiDesktopApi = {
   testProviderConnection: (config: ProviderConnectionTest) => ipcRenderer.invoke(IPC.testConnection, config),
   sendPrompt: (text: string, images?: ImageAttachment[]) => ipcRenderer.invoke(IPC.prompt, text, images),
   abort: () => ipcRenderer.invoke(IPC.abort),
+  cancelSubagent: (taskId: string) => ipcRenderer.invoke(IPC.cancelSubagent, taskId),
   setModel: (provider: string, id: string) => ipcRenderer.invoke(IPC.model, provider, id),
   setThinking: (level: ThinkingLevel) => ipcRenderer.invoke(IPC.thinking, level),
   // Forwarded to main with no local cache: main validates, confirms and persists.
@@ -74,6 +75,9 @@ const api: PiDesktopApi = {
   uninstallEngine: (version: string) => ipcRenderer.invoke(IPC.engineUninstall, version),
   deactivateEngine: () => ipcRenderer.invoke(IPC.engineDeactivate),
   getPackages: () => ipcRenderer.invoke(IPC.packages),
+  listSubagents: () => ipcRenderer.invoke(IPC.subagents),
+  saveSubagent: (name, edit) => ipcRenderer.invoke(IPC.subagentSave, name, edit),
+  deleteSubagent: (name) => ipcRenderer.invoke(IPC.subagentDelete, name),
   installPackage: (source: string) => ipcRenderer.invoke(IPC.packageInstall, source),
   updatePackages: (source?: string) => ipcRenderer.invoke(IPC.packageUpdate, source),
   removePackage: (source: string) => ipcRenderer.invoke(IPC.packageRemove, source),

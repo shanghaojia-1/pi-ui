@@ -13,13 +13,17 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["node", "vite/client"],
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
-      "@renderer/*": ["src/renderer/src/*"]
+      "@renderer/*": ["src/renderer/src/*"],
+      "@earendil-works/pi-agent-core": ["node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core"],
+      "@earendil-works/pi-ai": ["node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai"],
+      "typebox": ["node_modules/@earendil-works/pi-coding-agent/node_modules/typebox"]
     }
   },
-  "include": ["src", "electron.vite.config.ts", "tests"]
+  "include": ["src", "extensions/**/*.ts", "electron.vite.config.ts", "tests"]
 }

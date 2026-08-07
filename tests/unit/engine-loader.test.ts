@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * Integration tests for the engine loader against the REAL filesystem and the
- * REAL builtin package (no module mocks). Each test gets a fresh loader with
- * its own userData dir via vi.resetModules + vi.doMock, so the module-level
+ * real filesystem (no engine-module mocks). Each test gets a fresh loader
+ * with its own userData dir via vi.resetModules + vi.doMock, so module-level
  * engine cache cannot leak between tests.
  */
 async function freshLoader(userData: string): Promise<typeof import('../../src/main/engine-loader')> {
@@ -72,36 +72,35 @@ describe('engine-loader npm discovery', () => {
   })
 })
 
-describe('engine-loader builtin path', () => {
-  it('loads the REAL builtin engine via dynamic import (no createRequire)', async () => {
+describe('engine-loader setup requirement', () => {
+  it('requires explicit configuration instead of loading a bundled engine', async () => {
     const loader = await freshLoader(join(TMP_ROOT, 'a'))
     const api = await loader.loadEngineApi()
-    expect(typeof api.createAgentSession).toBe('function')
-    expect(typeof api.getAgentDir).toBe('function')
-    expect(typeof api.ModelRuntime.create).toBe('function')
-    expect(loader.getEngineStatus().active?.source).toBe('builtin')
-    expect(loader.getEngineStatus().compatible).toBe(true)
-    expect(loader.getEngineApi()).toBe(api)
+    expect(api).toBeNull()
+    expect(loader.getEngineStatus().active).toBeNull()
+    expect(loader.getEngineStatus().error).toBeNull()
+    expect(() => loader.getEngineApi()).toThrow('not configured')
+    expect(() => loader.getEnginePackagePath()).toThrow('not configured')
   })
 
-  it('falls back to the builtin when the activated version is not installed', async () => {
+  it('does not fall back when the activated version is not installed', async () => {
     const userData = join(TMP_ROOT, 'b')
     activate(userData, '0.99.0')
     const loader = await freshLoader(userData)
     const api = await loader.loadEngineApi()
-    expect(typeof api.createAgentSession).toBe('function')
-    expect(loader.getEngineStatus().active?.source).toBe('builtin')
+    expect(api).toBeNull()
+    expect(loader.getEngineStatus().active).toBeNull()
     expect(loader.getEngineStatus().error).toMatch(/missing or corrupt/)
   })
 
-  it('falls back to the builtin when the activated version is outside the supported range', async () => {
+  it('does not fall back when the activated version is outside the supported range', async () => {
     const userData = join(TMP_ROOT, 'c')
     writeFakeEngine(userData, '0.99.0')
     activate(userData, '0.99.0')
     const loader = await freshLoader(userData)
     const api = await loader.loadEngineApi()
-    expect(typeof api.createAgentSession).toBe('function')
-    expect(loader.getEngineStatus().active?.source).toBe('builtin')
+    expect(api).toBeNull()
+    expect(loader.getEngineStatus().active).toBeNull()
     expect(loader.getEngineStatus().error).toMatch(/outside the supported range/)
   })
 })

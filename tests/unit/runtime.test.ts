@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionEvent, InlineExtension } from '@earendil-works/pi-coding-agent'
 import type { BrowserWindow } from 'electron'
@@ -14,11 +15,13 @@ const mocks = vi.hoisted(() => ({
   SessionManager: { create: vi.fn(), open: vi.fn(), list: vi.fn(), listAll: vi.fn() },
   DefaultResourceLoader: vi.fn(),
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
+  app: { getAppPath: vi.fn(() => '/tmp/pi-app'), getVersion: vi.fn(() => '0.1.0') },
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: class BrowserWindow {},
   dialog: mocks.dialog,
+  app: mocks.app,
 }))
 
 vi.mock('@earendil-works/pi-coding-agent', () => ({
@@ -39,7 +42,19 @@ vi.mock('../../src/main/engine-loader', () => ({
     ModelRuntime: mocks.ModelRuntime,
     SessionManager: mocks.SessionManager,
     DefaultPackageManager: class DefaultPackageManager {},
+    // Minimal frontmatter parser: --- block of `key: value` lines + body.
+    parseFrontmatter: (content: string) => {
+      const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
+      if (!match) return { frontmatter: {}, body: content }
+      const frontmatter: Record<string, string> = {}
+      for (const line of match[1]!.split('\n')) {
+        const m = line.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/)
+        if (m) frontmatter[m[1]!] = m[2]!
+      }
+      return { frontmatter, body: match[2] ?? '' }
+    },
   }),
+  getEnginePackagePath: () => '/tmp/pi-engine',
 }))
 
 const TMP = realpathSync(tmpdir())
@@ -114,6 +129,7 @@ class FakeSession {
   disposed = false
   getContextUsage: (() => unknown) | null = null
   private subscriber: ((event: unknown) => void) | null = null
+  activeToolNames = ['read', 'bash', 'edit', 'write', 'subagent']
 
   prompt(text: string, options?: Record<string, unknown>): Promise<unknown> {
     this.promptCalls.push({ text, options })
@@ -133,6 +149,8 @@ class FakeSession {
   async bindExtensions(): Promise<void> {
     if (this.bindExtensionsImpl) await this.bindExtensionsImpl()
   }
+  getActiveToolNames(): string[] { return [...this.activeToolNames] }
+  setActiveToolsByName(names: string[]): void { this.activeToolNames = [...names] }
   async setModel(): Promise<void> {}
   setThinkingLevel(): void {}
   emit(event: unknown): void { this.subscriber?.(event) }
@@ -156,6 +174,8 @@ beforeAll(() => { agentDir = mkdtempSync(join(TMP, 'pi-agent-')) })
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.getAgentDir.mockReturnValue(agentDir)
+  mocks.app.getAppPath.mockReturnValue('/tmp/pi-app')
+  mocks.app.getVersion.mockReturnValue('0.1.0')
   mocks.ModelRuntime.create.mockResolvedValue({ getAvailable: async () => [], getModel: () => null })
   mocks.SessionManager.listAll.mockResolvedValue([])
   mocks.SessionManager.create.mockImplementation((path: string) => ({ getSessionDir: () => path }))
@@ -171,6 +191,19 @@ async function initRuntime(workspace?: string, session?: FakeSession): Promise<P
   await runtime.initialize(workspace ?? mkdtempSync(join(TMP, 'pi-ws-')))
   return runtime
 }
+
+describe('session tool activation', () => {
+  it('keeps extension tools active while adding the read-only search tools', async () => {
+    const session = new FakeSession()
+    await initRuntime(undefined, session)
+
+    const options = mocks.createAgentSession.mock.calls[0]![0] as Record<string, unknown>
+    expect(options).not.toHaveProperty('tools')
+    expect(session.activeToolNames).toEqual([
+      'read', 'bash', 'edit', 'write', 'subagent', 'grep', 'find', 'ls',
+    ])
+  })
+})
 
 describe('prompt IPC', () => {
   it('waits only for preflight on a non-streaming run and records async failure only in the current session', async () => {
@@ -721,6 +754,7 @@ describe('persistent tool-result merging', () => {
       input: expect.stringContaining('a.txt'),
       output: 'patched ok',
       patch: expect.stringContaining('diff --git a/a.txt'),
+      details: expect.objectContaining({ patch: expect.stringContaining('diff --git a/a.txt') }),
     })
     expect(blocks[1]).toMatchObject({ type: 'tool', id: 'call-2', name: 'bash', status: 'error', output: 'command failed' })
     const toolBlocks = snap.messages.flatMap((message) => message.blocks).filter((block) => block.type === 'tool')
@@ -1986,6 +2020,28 @@ describe('approval extension', () => {
     expect(await handler({ toolName: 'bash', input: { command: 'ls' } })).toBeUndefined()
     expect(await handler({ toolName: 'edit', input: { file: 'a' } })).toBeUndefined()
   })
+
+  it('always requires a host verdict for project-scoped subagents', async () => {
+    await initRuntime()
+    const options = mocks.DefaultResourceLoader.mock.calls[0]![0] as { extensionFactories: InlineExtension[] }
+    const factory = options.extensionFactories[0]! as unknown as (pi: { on: (event: string, handler: unknown) => void }) => void
+    const pi = { on: vi.fn() }
+    factory(pi)
+    const handler = pi.on.mock.calls[0]![1] as (event: { toolName: string; input: Record<string, unknown> }) => unknown
+
+    mocks.dialog.showMessageBox.mockResolvedValueOnce({ response: 1, checkboxChecked: false })
+    expect(await handler({
+      toolName: 'subagent',
+      input: { agentScope: 'project', agent: 'worker', task: 'change the repo' },
+    })).toEqual({ block: true, reason: 'Project subagents denied by user' })
+
+    mocks.dialog.showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false })
+    expect(await handler({
+      toolName: 'subagent',
+      input: { agentScope: 'both', tasks: [{ agent: 'scout', task: 'inspect' }] },
+    })).toBeUndefined()
+    expect(mocks.dialog.showMessageBox).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('tool approval mode', () => {
@@ -2481,7 +2537,7 @@ describe('custom provider config', () => {
     expect(await runtime.getProviderConfig('missing')).toBeNull()
   })
 
-  it('addCustomProvider editing keeps the stored key and full model configs', async () => {
+  it('addCustomProvider editing keeps the stored key and unknown model fields, and applies editable ones', async () => {
     mocks.ModelRuntime.create.mockResolvedValue({
       getAvailable: async () => [], getModel: () => null,
       refresh: async () => ({ errors: new Map() }),
@@ -2500,22 +2556,39 @@ describe('custom provider config', () => {
       },
     }))
     const runtime = await initRuntime()
-    // Same id, new baseUrl, no new key: keeps llama3.1:8b (full config) and
-    // drops qwen, adds gpt-4o.
+    // Same id, new baseUrl, no new key: unknown stored fields (compat) on
+    // llama3.1:8b survive, the editable ones follow the dialog, qwen is
+    // dropped and gpt-4o added.
     await runtime.addCustomProvider({
       id: 'my-ollama',
       name: 'Local Ollama',
       baseUrl: 'http://localhost:11435/v1',
       api: 'openai-completions',
-      models: [{ id: 'llama3.1:8b' }, { id: 'gpt-4o', name: 'GPT' }],
+      models: [
+        { id: 'llama3.1:8b', name: 'Llama 3.1', input: ['text', 'image'], contextWindow: 131072 },
+        { id: 'gpt-4o', name: 'GPT' },
+      ],
     })
-    const written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
-    const provider = written.providers['my-ollama']
+    let written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
+    let provider = written.providers['my-ollama']
     expect(provider.apiKey).toBe('sk-original') // preserved when no new key is typed
     expect(provider.baseUrl).toBe('http://localhost:11435/v1')
     expect(provider.models).toEqual([
-      { id: 'llama3.1:8b', contextWindow: 128000, compat: { thinkingFormat: 'deepseek' } },
+      { id: 'llama3.1:8b', name: 'Llama 3.1', input: ['text', 'image'], contextWindow: 131072, compat: { thinkingFormat: 'deepseek' } },
       { id: 'gpt-4o', name: 'GPT' },
+    ])
+    // A later edit that clears the editable fields persists the clearing
+    // while the unknown compat field stays untouched.
+    await runtime.addCustomProvider({
+      id: 'my-ollama',
+      baseUrl: 'http://localhost:11435/v1',
+      api: 'openai-completions',
+      models: [{ id: 'llama3.1:8b' }],
+    })
+    written = JSON.parse(readFileSync(join(agentDir, 'models.json'), 'utf8'))
+    provider = written.providers['my-ollama']
+    expect(provider.models).toEqual([
+      { id: 'llama3.1:8b', compat: { thinkingFormat: 'deepseek' } },
     ])
   })
 
@@ -2593,3 +2666,341 @@ describe('provider types & built-in key save', () => {
   })
 })
 
+
+describe('compaction', () => {
+  it('compaction_start enters compacting; compaction_end restores idle and surfaces failures', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const p = priv(runtime)
+
+    // Manual compaction emits only start/end (no agent_settled): the compacting
+    // state must be restored by compaction_end or the status bar would stay
+    // stuck on "Compacting context…" forever.
+    p.handleEvent({ type: 'compaction_start', reason: 'manual' } as unknown as AgentSessionEvent)
+    expect(runtime.snapshot().runState).toBe('compacting')
+
+    p.handleEvent({ type: 'compaction_end', reason: 'manual', result: undefined, aborted: false, willRetry: false } as unknown as AgentSessionEvent)
+    expect(runtime.snapshot().runState).toBe('idle')
+    expect(runtime.snapshot().statusText).toBe('Ready')
+    expect(runtime.snapshot().error).toBeNull()
+
+    // A failed compaction restores idle too, with a recoverable error banner.
+    p.handleEvent({ type: 'compaction_start', reason: 'manual' } as unknown as AgentSessionEvent)
+    p.handleEvent({
+      type: 'compaction_end', reason: 'manual', result: undefined, aborted: false, willRetry: false,
+      errorMessage: 'model refused to summarize',
+    } as unknown as AgentSessionEvent)
+    expect(runtime.snapshot().runState).toBe('idle')
+    expect(runtime.snapshot().error).toEqual({ message: 'Compaction failed', detail: 'model refused to summarize', recoverable: true })
+  })
+
+  it('serializes compactionSummary messages as system cards in conversation order', async () => {
+    const session = new FakeSession()
+    session.messages = [
+      { role: 'user', content: 'first question', timestamp: 1 },
+      { role: 'compactionSummary', summary: 'Summarized earlier work.', tokensBefore: 12_000, timestamp: 2 },
+      { role: 'user', content: 'continue please', timestamp: 3 },
+    ]
+    const runtime = await initRuntime(undefined, session)
+    const roles = runtime.snapshot().messages.map((m) => m.role)
+    expect(roles).toEqual(['user', 'system', 'user'])
+    const card = runtime.snapshot().messages[1]!
+    expect(card.role).toBe('system')
+    expect(card.blocks).toEqual([{ type: 'text', text: 'Summarized earlier work.' }])
+    expect(card.id).toMatch(/^compaction-/)
+  })
+
+  it('skips compactionSummary messages with a non-string summary', async () => {
+    const session = new FakeSession()
+    session.messages = [
+      { role: 'user', content: 'hi', timestamp: 1 },
+      { role: 'compactionSummary', tokensBefore: 500, timestamp: 2 },
+    ]
+    const runtime = await initRuntime(undefined, session)
+    const messages = runtime.snapshot().messages
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.role).toBe('user')
+  })
+})
+
+describe('subagent tool details passthrough', () => {
+  const SUBAGENT_DETAILS = {
+    mode: 'single',
+    agentScope: 'user',
+    projectAgentsDir: null,
+    results: [{ agent: 'scout', agentSource: 'user', task: 'find auth', exitCode: 0, messages: [], stderr: '', usage: { input: 1000, output: 200, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 } }],
+  }
+
+  it('tool_execution_end carries structured details into the live tool block', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const p = priv(runtime)
+    p.handleEvent({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'subagent', args: { agent: 'scout', task: 'find auth' } } as unknown as AgentSessionEvent)
+    p.handleEvent({
+      type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'subagent', isError: false,
+      result: { content: [{ type: 'text', text: 'done' }], details: SUBAGENT_DETAILS },
+    } as unknown as AgentSessionEvent)
+    const live = p.liveTools.get('call-1')!
+    expect(live.status).toBe('success')
+    expect(live.details).toEqual(SUBAGENT_DETAILS)
+  })
+
+  it('restores structured details from persisted toolResult messages', async () => {
+    const session = new FakeSession()
+    session.messages = [
+      { role: 'user', content: 'delegate recon', timestamp: 1 },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', name: 'subagent', arguments: { agent: 'scout', task: 'find auth' } }],
+        timestamp: 2,
+      },
+      {
+        role: 'toolResult', toolCallId: 'call-1', toolName: 'subagent',
+        content: [{ type: 'text', text: 'scout output' }],
+        details: SUBAGENT_DETAILS,
+        timestamp: 3,
+      },
+    ]
+    const runtime = await initRuntime(undefined, session)
+    const assistant = runtime.snapshot().messages.find((m) => m.role === 'assistant')!
+    const toolBlock = assistant.blocks.find((b) => b.type === 'tool')!
+    expect(toolBlock.details).toEqual(SUBAGENT_DETAILS)
+  })
+
+  it('leaves details undefined when the tool result has none', async () => {
+    const session = new FakeSession()
+    session.messages = [
+      { role: 'user', content: 'hi', timestamp: 1 },
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'ls' } }],
+        timestamp: 2,
+      },
+      {
+        role: 'toolResult', toolCallId: 'call-1', toolName: 'bash',
+        content: [{ type: 'text', text: 'out' }],
+        timestamp: 3,
+      },
+    ]
+    const runtime = await initRuntime(undefined, session)
+    const assistant = runtime.snapshot().messages.find((m) => m.role === 'assistant')!
+    const toolBlock = assistant.blocks.find((b) => b.type === 'tool')!
+    expect('details' in toolBlock).toBe(false)
+  })
+})
+
+describe('bundled subagent deployment', () => {
+  const projectRoot = join(TMP, '..', '..') // replaced below
+
+  it('copies the extension and agent definitions into a fresh agent dir', async () => {
+    const fresh = mkdtempSync(join(TMP, 'pi-agent-deploy-'))
+    mocks.getAgentDir.mockReturnValue(fresh)
+    // Point getAppPath at the real project root so the bundled sources exist.
+    mocks.app.getAppPath.mockReturnValue(join(dirname(fileURLToPath(import.meta.url)), '..', '..'))
+    const runtime = await initRuntime()
+    expect(runtime.snapshot().runState).toBe('idle')
+    expect(existsSync(join(fresh, 'extensions', 'subagent', 'index.ts'))).toBe(true)
+    expect(existsSync(join(fresh, 'extensions', 'subagent', 'agents.ts'))).toBe(true)
+    for (const name of ['scout', 'planner', 'reviewer', 'worker']) {
+      expect(existsSync(join(fresh, 'agents', `${name}.md`))).toBe(true)
+    }
+    // Version marker written for future upgrade checks.
+    expect(readFileSync(join(fresh, 'extensions', 'subagent', '.pi-studio-version'), 'utf8')).toBe('0.1.0')
+  })
+
+  it('never overwrites an existing install (user edits survive)', async () => {
+    const fresh = mkdtempSync(join(TMP, 'pi-agent-deploy-'))
+    mocks.getAgentDir.mockReturnValue(fresh)
+    mocks.app.getAppPath.mockReturnValue(join(dirname(fileURLToPath(import.meta.url)), '..', '..'))
+    const target = join(fresh, 'extensions', 'subagent')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'index.ts'), '// user modified')
+    const runtime = await initRuntime()
+    expect(readFileSync(join(target, 'index.ts'), 'utf8')).toBe('// user modified')
+    expect(existsSync(join(fresh, 'agents', 'scout.md'))).toBe(false)
+  })
+
+  it('upgrades marked Pi Studio copies, backs up changed extension files, and preserves agent prompts', async () => {
+    const fresh = mkdtempSync(join(TMP, 'pi-agent-deploy-'))
+    mocks.getAgentDir.mockReturnValue(fresh)
+    const project = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+    mocks.app.getAppPath.mockReturnValue(project)
+    const target = join(fresh, 'extensions', 'subagent')
+    const agents = join(fresh, 'agents')
+    mkdirSync(target, { recursive: true })
+    mkdirSync(agents, { recursive: true })
+    writeFileSync(join(target, 'index.ts'), '// old managed extension')
+    writeFileSync(join(target, 'agents.ts'), '// old managed discovery')
+    writeFileSync(join(target, '.pi-studio-version'), '0.0.1')
+    writeFileSync(join(agents, 'scout.md'), 'user customized scout')
+
+    await initRuntime()
+
+    expect(readFileSync(join(target, 'index.ts'), 'utf8')).toBe(readFileSync(join(project, 'extensions', 'subagent', 'index.ts'), 'utf8'))
+    expect(readFileSync(join(fresh, 'backups', 'pi-studio-subagent', '0.0.1', 'index.ts'), 'utf8')).toBe('// old managed extension')
+    expect(readFileSync(join(agents, 'scout.md'), 'utf8')).toBe('user customized scout')
+    expect(readFileSync(join(target, '.pi-studio-version'), 'utf8')).toBe('0.1.0')
+  })
+
+  it('ignores a missing bundled source (dev layout without extensions)', async () => {
+    const fresh = mkdtempSync(join(TMP, 'pi-agent-deploy-'))
+    mocks.getAgentDir.mockReturnValue(fresh)
+    mocks.app.getAppPath.mockReturnValue('/tmp/no-such-app-root')
+    const runtime = await initRuntime()
+    expect(runtime.snapshot().error).toBeNull()
+    expect(existsSync(join(fresh, 'extensions'))).toBe(false)
+  })
+})
+
+describe('subagent management', () => {
+  function freshAgentDir(): string {
+    const dir = mkdtempSync(join(TMP, 'pi-agent-mgmt-'))
+    mocks.getAgentDir.mockReturnValue(dir)
+    return dir
+  }
+
+  it('lists user subagent definitions parsed from agents/*.md, sorted by name', async () => {
+    const dir = freshAgentDir()
+    const agentsDir = join(dir, 'agents')
+    mkdirSync(agentsDir, { recursive: true })
+    writeFileSync(join(agentsDir, 'worker.md'), '---\nname: worker\ndescription: General purpose\nmodel: claude-sonnet\n---\n\nDo work.\n')
+    writeFileSync(join(agentsDir, 'scout.md'), '---\nname: scout\ndescription: Fast recon\ntools: read, grep, find, ls\n---\n\nRecon quickly.\n')
+    writeFileSync(join(agentsDir, 'broken.md'), 'no frontmatter here')
+    const runtime = await initRuntime()
+    const agents = runtime.listSubagents()
+    expect(agents.map((a) => a.name)).toEqual(['scout', 'worker'])
+    const scout = agents[0]!
+    expect(scout.description).toBe('Fast recon')
+    expect(scout.tools).toEqual(['read', 'grep', 'find', 'ls'])
+    expect(scout.model).toBeUndefined()
+    expect(scout.systemPrompt.trim()).toBe('Recon quickly.')
+    const worker = agents[1]!
+    expect(worker.model).toBe('claude-sonnet')
+    expect(worker.tools).toBeUndefined()
+  })
+
+  it('returns an empty list when the agents dir is missing', async () => {
+    freshAgentDir()
+    const runtime = await initRuntime()
+    expect(runtime.listSubagents()).toEqual([])
+  })
+
+  it('saveSubagent writes a definition and replaces a symlink with a real file', async () => {
+    const dir = freshAgentDir()
+    const agentsDir = join(dir, 'agents')
+    mkdirSync(agentsDir, { recursive: true })
+    // Simulate a dev-time symlink into a repo source file.
+    const source = join(TMP, `pi-source-${Date.now()}.md`)
+    writeFileSync(source, '---\nname: scout\ndescription: bundled\n---\n\nbundled prompt\n')
+    symlinkSync(source, join(agentsDir, 'scout.md'))
+    const runtime = await initRuntime()
+    const list = runtime.saveSubagent('scout', {
+      name: 'scout',
+      description: 'Edited via GUI',
+      tools: ['read', 'bash'],
+      model: 'claude-haiku-4-5',
+      systemPrompt: 'New prompt body.',
+    })
+    expect(list.map((a) => a.name)).toEqual(['scout'])
+    const saved = list[0]!
+    expect(saved.description).toBe('Edited via GUI')
+    expect(saved.tools).toEqual(['read', 'bash'])
+    expect(saved.model).toBe('claude-haiku-4-5')
+    expect(saved.systemPrompt.trim()).toBe('New prompt body.')
+    // The symlink was replaced by a real file; the bundle source is untouched.
+    const stats = lstatSync(join(agentsDir, 'scout.md'))
+    expect(stats.isSymbolicLink()).toBe(false)
+    expect(readFileSync(source, 'utf8')).toContain('bundled prompt')
+    expect(readFileSync(join(agentsDir, 'scout.md'), 'utf8')).toContain('Edited via GUI')
+  })
+
+  it('rejects invalid names and mismatched edits', async () => {
+    const runtime = await initRuntime()
+    expect(() => runtime.saveSubagent('../evil', { name: '../evil', description: 'x', systemPrompt: '' })).toThrow('Invalid subagent name')
+    expect(() => runtime.saveSubagent('a', { name: 'b', description: 'x', systemPrompt: '' })).toThrow('Invalid subagent name')
+    expect(() => runtime.saveSubagent('a', { name: 'a', description: '  ', systemPrompt: '' })).toThrow('Description is required')
+  })
+
+  it('deleteSubagent removes the file and lists the remainder', async () => {
+    const dir = freshAgentDir()
+    const agentsDir = join(dir, 'agents')
+    mkdirSync(agentsDir, { recursive: true })
+    writeFileSync(join(agentsDir, 'scout.md'), '---\nname: scout\ndescription: Fast recon\n---\n\nRecon.\n')
+    writeFileSync(join(agentsDir, 'worker.md'), '---\nname: worker\ndescription: General\n---\n\nWork.\n')
+    const runtime = await initRuntime()
+    expect(runtime.listSubagents()).toHaveLength(2)
+    const list = runtime.deleteSubagent('scout')
+    expect(list.map((a) => a.name)).toEqual(['worker'])
+    expect(existsSync(join(agentsDir, 'scout.md'))).toBe(false)
+    expect(() => runtime.deleteSubagent('missing')).toThrow('does not exist')
+  })
+})
+
+describe('subagent live details passthrough', () => {
+  it('cancels one registered subagent task without aborting the parent session', async () => {
+    const runtime = await initRuntime()
+    const cancel = vi.fn()
+    const symbol = Symbol.for('pi-studio.subagent-control')
+    const host = globalThis as typeof globalThis & Record<symbol, Map<string, () => void>>
+    host[symbol] = new Map([['run-1:task-2', cancel]])
+    expect(runtime.cancelSubagent('run-1:task-2')).toBe(true)
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(runtime.cancelSubagent('missing')).toBe(false)
+    expect(() => runtime.cancelSubagent('../bad')).toThrow('Invalid subagent task id')
+    delete host[symbol]
+  })
+
+  it('tool_execution_update streams slim details (messages dropped) into the live block', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const p = priv(runtime)
+    p.handleEvent({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'subagent', args: { agent: 'scout', task: 'x' } } as unknown as AgentSessionEvent)
+    p.handleEvent({
+      type: 'tool_execution_update', toolCallId: 'call-1', toolName: 'subagent',
+      partialResult: {
+        content: [{ type: 'text', text: 'Parallel: 1/2 done, 1 running...' }],
+        details: {
+          mode: 'parallel',
+          results: [
+            { agent: 'scout', task: 'models', exitCode: 0, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'big' }] }], usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 }, model: 'm1' },
+            { agent: 'scout', task: 'providers', exitCode: -1, messages: [] },
+          ],
+        },
+      },
+    } as unknown as AgentSessionEvent)
+    const live = p.liveTools.get('call-1')!
+    expect(live.status).toBe('running')
+    expect(live.details).toEqual({
+      mode: 'parallel',
+      results: [
+        { agent: 'scout', task: 'models', exitCode: 0, usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 1 }, model: 'm1' },
+        { agent: 'scout', task: 'providers', exitCode: -1 },
+      ],
+    })
+    // messages never cross the IPC boundary; the output is the plain text.
+    expect(JSON.stringify(live.details)).not.toContain('big')
+    expect(live.output).toContain('1/2 done')
+    expect(live.output).not.toContain('pi-subagent-state')
+  })
+
+  it('tool_execution_end replaces slim details with the full payload', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const p = priv(runtime)
+    p.handleEvent({ type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'subagent', args: {} } as unknown as AgentSessionEvent)
+    p.handleEvent({
+      type: 'tool_execution_update', toolCallId: 'call-1', toolName: 'subagent',
+      partialResult: { content: [{ type: 'text', text: 'running' }], details: { mode: 'single', results: [{ agent: 'scout', task: 'x', exitCode: -1 }] } },
+    } as unknown as AgentSessionEvent)
+    p.handleEvent({
+      type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'subagent', isError: false,
+      result: {
+        content: [{ type: 'text', text: 'done' }],
+        details: { mode: 'single', results: [{ agent: 'scout', task: 'x', exitCode: 0, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'full output' }] }] }] },
+      },
+    } as unknown as AgentSessionEvent)
+    const live = p.liveTools.get('call-1')!
+    expect(live.status).toBe('success')
+    expect((live.details as { results: Array<{ messages?: unknown }> }).results[0]!.messages).toBeDefined()
+  })
+})

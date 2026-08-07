@@ -3,6 +3,7 @@ import { ChevronRight, CircleCheck, CircleSlash, CircleX, Clock, LoaderCircle } 
 import type { ToolBlock } from '@shared/contracts'
 import { formatDuration } from '../lib/format'
 import { useI18n } from '../lib/i18n'
+import SubagentCard, { isSubagentDetails } from './SubagentCard'
 
 const STATUS_META: Record<ToolBlock['status'], { labelKey: string }> = {
   pending: { labelKey: 'toolcall.status.pending' },
@@ -32,6 +33,14 @@ export default function ToolCall({ tool }: { tool: ToolBlock }) {
   const hasInput = tool.input !== ''
   const meta = STATUS_META[tool.status]
   const metaLabel = t(meta.labelKey)
+
+  // Structured subagent payload: render the dedicated card instead of the
+  // generic input/output dump. Running calls stream slim details (agent /
+  // task / status per result) so the live view appears immediately; malformed
+  // payloads fall back to the generic card. Hook order is untouched.
+  if (tool.name === 'subagent' && (isSubagentDetails(tool.details) || tool.status === 'running')) {
+    return <SubagentCard tool={tool} />
+  }
 
   return (
     <div className={`toolcall${open ? ' toolcall-open' : ''}`} data-status={tool.status}>

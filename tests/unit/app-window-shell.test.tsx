@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import type { AppSnapshot } from '../../src/shared/contracts'
+import type { AppSnapshot, EngineStatus } from '../../src/shared/contracts'
 
 /**
  * Component-level conditional-rendering tests: the three drag strips and the
@@ -32,6 +32,16 @@ const FAKE_SNAPSHOT: AppSnapshot = {
   error: null,
 }
 
+const CONFIGURED_ENGINE: EngineStatus = {
+  active: { version: '0.84.0', source: 'userdata', path: '/tmp/pi-engine' },
+  compatible: true,
+  supportedRange: '>=0.83.0 <0.85.0',
+  installed: ['0.84.0'],
+  npm: { available: true, path: '/usr/bin/npm' },
+  installDir: '/tmp/engine',
+  error: null,
+}
+
 vi.mock('../../src/renderer/src/hooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/renderer/src/hooks')>()
   return {
@@ -57,6 +67,16 @@ afterEach(() => {
 })
 
 describe('window shell conditional rendering', () => {
+  it('renders first-run engine setup instead of the application shell when no Pi is configured', async () => {
+    stubWindow('darwin')
+    vi.resetModules()
+    const { default: App } = await import('../../src/renderer/src/App')
+    const html = renderToString(<App initialEngineStatus={{ ...CONFIGURED_ENGINE, active: null, compatible: false }} />)
+    expect(html).toContain('engine-setup')
+    expect(html).toContain('engineSetup.title')
+    expect(html).not.toContain('app-col-left')
+  })
+
   it.each([
     { platform: 'darwin', strips: 3, darwinClass: true },
     { platform: 'win32', strips: 0, darwinClass: false },
@@ -68,7 +88,7 @@ describe('window shell conditional rendering', () => {
       stubWindow(platform)
       vi.resetModules()
       const { default: App } = await import('../../src/renderer/src/App')
-      const html = renderToString(<App />)
+      const html = renderToString(<App initialEngineStatus={CONFIGURED_ENGINE} />)
 
       const stripCount = (html.match(/class="drag-strip"/g) ?? []).length
       expect(stripCount).toBe(strips)

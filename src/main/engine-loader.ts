@@ -1,13 +1,11 @@
 /**
  * Swappable pi-engine loader and manager.
  *
- * The GUI ships with a builtin engine (@earendil-works/pi-coding-agent in
- * node_modules, bundled into the asar). The user can install additional
- * engine versions under <userData>/engine/<version>/ via npm; an active
- * version is recorded in <userData>/engine/active.json and takes precedence
- * over the builtin on the next launch. Any failure (missing install, version
- * outside the supported range, corrupt package) falls back to the builtin so
- * the app can never fail to start because of a bad external engine.
+ * Pi Studio deliberately does not ship a runtime engine. The user installs a
+ * compatible version under <userData>/engine/<version>/ and the selected
+ * version is recorded in <userData>/engine/active.json. A missing, corrupt or
+ * incompatible selection leaves the engine unconfigured so the renderer can
+ * show first-run setup; it never silently falls back to a different Pi.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -23,7 +21,7 @@ import {
   ENGINE_PACKAGE, ENGINE_SUPPORTED_RANGE, isEngineVersion, sortVersionsDescending, versionInRange,
 } from './engine-version'
 
-export type EngineSource = 'builtin' | 'userdata'
+export type EngineSource = 'userdata'
 
 export interface ActiveEngine {
   version: string
@@ -41,7 +39,7 @@ export interface EngineStatus {
   npm: { available: boolean; path: string | null }
   /** Directory external engines are installed into (for manual install hints). */
   installDir: string
-  /** Fixed-text reason when the external engine failed and builtin is used. */
+  /** Fixed-text reason why the configured engine could not be loaded. */
   error: string | null
 }
 
@@ -92,16 +90,6 @@ function readActiveVersion(): string | null {
 }
 
 /**
- * Loads the builtin engine through the normal module graph (asar-transparent
- * in the packaged app, mocked by vitest in tests). The package is ESM-only
- * (its exports map has no require condition), so a dynamic import is
- * required — createRequire would throw ERR_PACKAGE_PATH_NOT_EXPORTED.
- */
-async function loadBuiltin(): Promise<EngineModule> {
-  return await import(ENGINE_PACKAGE) as EngineModule
-}
-
-/**
  * Loads an externally installed engine package from disk. The package root is
  * the npm-installed @earendil-works/pi-coding-agent; its main entry is read
  * from package.json and imported as a file URL.
@@ -115,59 +103,41 @@ async function loadUserDataEngine(root: string, version: string): Promise<Engine
 /**
  * Loads and caches the engine API. Called once at startup before the runtime
  * initializes; the cached result is served by getEngineApi() for the app's
- * lifetime. External engine failures are recorded (surfaced in the settings
- * UI) and always fall back to the builtin.
+ * lifetime. `null` means first-run setup is required. A failed selection is
+ * surfaced in the setup UI and never substituted with another engine.
  */
-export async function loadEngineApi(): Promise<EngineModule> {
+export async function loadEngineApi(): Promise<EngineModule | null> {
   if (cached !== null) return cached
   const requested = readActiveVersion()
-  if (requested !== null) {
-    if (!isEngineVersion(requested)) {
-      loadError = `Engine version entry is invalid: ${requested}`
-    } else {
-      const root = enginePackageRoot(requested)
-      const pkg = packageJsonOf(root)
-      if (pkg === null || typeof pkg.version !== 'string') {
-        loadError = `Installed engine ${requested} is missing or corrupt; using the builtin engine`
-      } else if (!versionInRange(pkg.version)) {
-        loadError = `Engine ${pkg.version} is outside the supported range (${ENGINE_SUPPORTED_RANGE}); using the builtin engine`
-      } else {
-        try {
-          const api = await loadUserDataEngine(root, requested)
-          cached = api
-          active = { version: pkg.version, source: 'userdata', path: root }
-          loadError = null
-          return api
-        } catch (error) {
-          loadError = `Failed to load engine ${pkg.version}: ${error instanceof Error ? error.message : 'unknown error'}`
-        }
-      }
-    }
-  }
-  cached = await loadBuiltin()
   active = null
-  try {
-    const version = await readBuiltinVersion()
-    active = { version, source: 'builtin', path: ENGINE_PACKAGE }
-  } catch { /* version unknown; active stays null */ }
-  return cached
-}
-
-async function readBuiltinVersion(): Promise<string> {
-  // The builtin package lives under the app path (project node_modules in
-  // dev, asar-transparent node_modules in the packaged app). package.json
-  // subpaths are NOT importable here (vite's resolver enforces the exports
-  // map strictly), so resolve the file directly instead.
-  const candidates = [
-    join(app.getAppPath(), 'node_modules', ...ENGINE_PACKAGE.split('/'), 'package.json'),
-  ]
-  for (const candidate of candidates) {
-    try {
-      const pkg = JSON.parse(readFileSync(candidate, 'utf8')) as { version?: unknown }
-      if (typeof pkg.version === 'string') return pkg.version
-    } catch { /* try next */ }
+  if (requested === null) {
+    loadError = null
+    return null
   }
-  throw new Error('builtin engine has no version')
+  if (!isEngineVersion(requested)) {
+    loadError = `Engine version entry is invalid: ${requested}`
+    return null
+  }
+  const root = enginePackageRoot(requested)
+  const pkg = packageJsonOf(root)
+  if (pkg === null || typeof pkg.version !== 'string') {
+    loadError = `Installed engine ${requested} is missing or corrupt`
+    return null
+  }
+  if (!versionInRange(pkg.version)) {
+    loadError = `Engine ${pkg.version} is outside the supported range (${ENGINE_SUPPORTED_RANGE})`
+    return null
+  }
+  try {
+    const api = await loadUserDataEngine(root, requested)
+    cached = api
+    active = { version: pkg.version, source: 'userdata', path: root }
+    loadError = null
+    return api
+  } catch (error) {
+    loadError = `Failed to load engine ${pkg.version}: ${error instanceof Error ? error.message : 'unknown error'}`
+    return null
+  }
 }
 
 /**
@@ -177,7 +147,7 @@ async function readBuiltinVersion(): Promise<string> {
  * runs; an unloaded engine is a programming error and fails loudly.
  */
 export function getEngineApi(): EngineModule {
-  if (cached === null) throw new Error('Engine API not loaded — call loadEngineApi() at startup first')
+  if (cached === null) throw new Error('Pi engine is not configured')
   return cached
 }
 
@@ -238,6 +208,15 @@ export async function listRegistryVersions(): Promise<string[]> {
     request.on('timeout', () => { request.destroy(); reject(new Error('Registry request timed out')) })
   })
   return sortVersionsDescending(versions.filter((version) => versionInRange(version))).slice(0, 20)
+}
+
+/**
+ * Resolved filesystem path of the configured engine package. Both the main
+ * session SDK and the subagent CLI are loaded from this exact directory.
+ */
+export function getEnginePackagePath(): string {
+  if (active === null) throw new Error('Pi engine is not configured')
+  return active.path
 }
 
 /**
@@ -355,7 +334,7 @@ export function uninstallEngineVersion(version: string): void {
   }
 }
 
-/** Clears any external activation (back to the builtin engine). */
+/** Clears the configured engine; the next launch returns to first-run setup. */
 export function deactivateEngine(): void {
   try { rmSync(activeFilePath(), { force: true }) } catch { /* best-effort */ }
 }

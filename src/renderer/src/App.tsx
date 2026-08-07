@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
-import { FolderOpen, LoaderCircle, TriangleAlert, X } from 'lucide-react'
-import type { AppInfo, AppSnapshot, DynamicCommand, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
+import { Download, FolderOpen, LoaderCircle, TriangleAlert, X } from 'lucide-react'
+import type { AppInfo, AppSnapshot, DynamicCommand, EngineStatus, ImageAttachment, SessionStatsInfo, ThinkingLevel } from '@shared/contracts'
 import { errorMessage, useMediaQuery, useSnapshot } from './hooks'
 import { formatCost, formatTokens } from './lib/format'
 import { shortcut } from './lib/shortcuts'
@@ -18,7 +18,7 @@ import { getThemeDefinition, useTheme } from './lib/theme'
 const platform = window.desktop?.platform ?? 'other'
 const isMac = platform === 'darwin'
 
-export default function App() {
+export default function App({ initialEngineStatus }: { initialEngineStatus?: EngineStatus } = {}) {
   const { t } = useI18n()
   const { theme } = useTheme()
   const { snapshot, loadError } = useSnapshot()
@@ -33,12 +33,74 @@ export default function App() {
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null)
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(initialEngineStatus ?? null)
+  const [engineVersion, setEngineVersion] = useState('')
+  const [engineVersions, setEngineVersions] = useState<string[] | null>(null)
+  const [engineBusy, setEngineBusy] = useState<'install' | 'activate' | 'fetch' | null>(null)
+  const [engineSetupError, setEngineSetupError] = useState<string | null>(null)
   /** Extension / template / skill slash commands; refreshed on session changes. */
   const [extraCommands, setExtraCommands] = useState<DynamicCommand[]>([])
   const composerRef = useRef<ComposerHandle>(null)
   const snapRef = useRef<AppSnapshot | null>(snapshot)
   snapRef.current = snapshot
   const splashTheme = getThemeDefinition(theme)
+
+  const refreshEngineStatus = useCallback(async () => {
+    const status = await window.pi.getEngineStatus()
+    setEngineStatus(status)
+    return status
+  }, [])
+
+  useEffect(() => {
+    refreshEngineStatus().catch((error: unknown) => setEngineSetupError(errorMessage(error)))
+  }, [refreshEngineStatus])
+
+  const fetchEngineVersions = useCallback(async () => {
+    if (engineBusy !== null) return
+    setEngineBusy('fetch')
+    setEngineSetupError(null)
+    try {
+      setEngineVersions(await window.pi.getEngineVersions())
+    } catch (error) {
+      setEngineSetupError(errorMessage(error))
+    } finally {
+      setEngineBusy(null)
+    }
+  }, [engineBusy])
+
+  const activateConfiguredEngine = useCallback(async (version: string) => {
+    if (engineBusy !== null) return
+    setEngineBusy('activate')
+    setEngineSetupError(null)
+    try {
+      await window.pi.activateEngine(version)
+      await refreshEngineStatus()
+    } catch (error) {
+      setEngineSetupError(errorMessage(error))
+    } finally {
+      setEngineBusy(null)
+    }
+  }, [engineBusy, refreshEngineStatus])
+
+  const installConfiguredEngine = useCallback(async () => {
+    const version = engineVersion.trim()
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      setEngineSetupError(t('settings.engine.versionInvalid'))
+      return
+    }
+    if (engineBusy !== null) return
+    setEngineBusy('install')
+    setEngineSetupError(null)
+    try {
+      await window.pi.installEngine(version)
+      await window.pi.activateEngine(version)
+      await refreshEngineStatus()
+    } catch (error) {
+      setEngineSetupError(errorMessage(error))
+    } finally {
+      setEngineBusy(null)
+    }
+  }, [engineBusy, engineVersion, refreshEngineStatus, t])
 
   const narrow = useMediaQuery('(max-width: 1080px)')
   const compact = useMediaQuery('(max-width: 780px)')
@@ -253,7 +315,7 @@ export default function App() {
     window.pi.getDynamicCommands().then(setExtraCommands, () => setExtraCommands([]))
   }, [snapshot?.activeSessionPath, snapshot?.workspace?.path])
 
-  if (snapshot === null) {
+  if (engineStatus === null || snapshot === null) {
     return (
       <div className={`splash${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
         <div className="splash-glow splash-glow-one" aria-hidden="true" />
@@ -282,6 +344,81 @@ export default function App() {
           )}
         </div>
         <div className="splash-footer">{splashTheme.quote ?? t('app.splash.footer')}</div>
+      </div>
+    )
+  }
+
+  if (engineStatus.active === null) {
+    return (
+      <div className={`splash engine-setup${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
+        <div className="splash-glow splash-glow-one" aria-hidden="true" />
+        <div className="splash-glow splash-glow-two" aria-hidden="true" />
+        <div className="splash-panel engine-setup-panel">
+          <div className="splash-mark" aria-hidden="true"><span>π</span></div>
+          <div className="splash-eyebrow">PI ENGINE</div>
+          <h1>{t('engineSetup.title')}</h1>
+          <p className="splash-subtitle">{t('engineSetup.subtitle')}</p>
+          <p className="engine-setup-range">{t('settings.engine.supportedRange', { range: engineStatus.supportedRange })}</p>
+
+          {engineStatus.error !== null || engineSetupError !== null ? (
+            <div className="splash-error engine-setup-error" role="alert">
+              <TriangleAlert size={17} aria-hidden="true" />
+              <p>{engineSetupError ?? engineStatus.error}</p>
+            </div>
+          ) : null}
+
+          {engineStatus.installed.length > 0 ? (
+            <div className="engine-setup-installed">
+              <span>{t('engineSetup.installed')}</span>
+              {engineStatus.installed.map((version) => (
+                <button
+                  type="button"
+                  className="btn"
+                  key={version}
+                  disabled={engineBusy !== null}
+                  onClick={() => void activateConfiguredEngine(version)}
+                >
+                  {engineBusy === 'activate' ? t('engineSetup.activating') : t('engineSetup.useVersion', { version })}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="engine-setup-form">
+            <input
+              type="text"
+              className="input"
+              value={engineVersion}
+              onChange={(event) => setEngineVersion(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void installConfiguredEngine() }}
+              placeholder={t('settings.engine.versionPh')}
+              aria-label={t('settings.engine.versionPh')}
+              autoFocus
+            />
+            <button type="button" className="btn btn-primary" disabled={engineBusy !== null} onClick={() => void installConfiguredEngine()}>
+              {engineBusy === 'install' ? <LoaderCircle size={15} className="splash-spin" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />}
+              {engineBusy === 'install' ? t('settings.engine.installing') : t('engineSetup.installAndUse')}
+            </button>
+          </div>
+          <button type="button" className="btn" disabled={engineBusy !== null} onClick={() => void fetchEngineVersions()}>
+            {engineBusy === 'fetch' ? t('settings.engine.fetchingVersions') : t('settings.engine.fetchVersions')}
+          </button>
+          {engineVersions !== null && engineVersions.length > 0 ? (
+            <div className="engine-setup-versions">
+              {engineVersions.slice(0, 10).map((version) => (
+                <button type="button" className="btn" key={version} onClick={() => setEngineVersion(version)}>{version}</button>
+              ))}
+            </div>
+          ) : null}
+          {!engineStatus.npm.available ? (
+            <div className="engine-setup-manual">
+              <p>{t('settings.engine.manualInstall')}</p>
+              <code>npm install --prefix &quot;{engineStatus.installDir}/&lt;版本&gt;&quot; --no-audit --no-fund @earendil-works/pi-coding-agent@&lt;版本&gt;</code>
+              <button type="button" className="btn" onClick={() => void refreshEngineStatus()}>{t('common.retry')}</button>
+            </div>
+          ) : null}
+        </div>
+        <div className="splash-footer">{t('engineSetup.footer')}</div>
       </div>
     )
   }

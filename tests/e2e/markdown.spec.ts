@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { seedConfiguredEngine } from './engine-fixture'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(HERE, '../..')
@@ -151,8 +152,10 @@ test.describe.serial('Markdown rendering from a seeded session (isolated, no LLM
 
     const tempUserData = join(tempRoot, 'user-data')
     mkdirSync(tempUserData)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({
       args: [PROJECT_ROOT],
       cwd: tempWorkspace,

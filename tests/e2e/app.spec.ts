@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { seedConfiguredEngine } from './engine-fixture'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(HERE, '../..')
@@ -12,6 +13,7 @@ const API_METHODS = [
   'abort',
   'activateEngine',
   'addCustomProvider',
+  'cancelSubagent',
   'checkPackageUpdates',
   'chooseWorkspace',
   'compactSession',
@@ -20,6 +22,7 @@ const API_METHODS = [
   'deactivateEngine',
   'deleteSession',
   'deleteSessionGroup',
+  'deleteSubagent',
   'exportSession',
   'getAppInfo',
   'getDynamicCommands',
@@ -34,6 +37,7 @@ const API_METHODS = [
   'getSnapshot',
   'installEngine',
   'installPackage',
+  'listSubagents',
   'logoutProvider',
   'moveSessionToGroup',
   'newSession',
@@ -48,6 +52,7 @@ const API_METHODS = [
   'renameSession',
   'renameSessionGroup',
   'saveProviderKey',
+  'saveSubagent',
   'sendPrompt',
   'setModel',
   'setRuntimeApiKey',
@@ -78,10 +83,12 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     tempWorkspace = join(tempRoot, 'workspace')
     tempUserData = join(tempRoot, 'user-data')
     for (const dir of [tempHome, tempAgent, tempWorkspace, tempUserData]) mkdirSync(dir)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E sandbox workspace\n')
 
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({
       args: [PROJECT_ROOT],
       cwd: tempWorkspace,
@@ -566,6 +573,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '默认设置', exact: true }).click()
     await expect(page.getByRole('button', { name: '保存默认设置' })).toBeVisible()
 
     // 2) Toggle both default switches and set the idle timeout (seconds→ms on save).
@@ -590,6 +598,9 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await page.getByRole('button', { name: '关闭设置' }).click()
     await expect(dialog).not.toBeVisible()
     await page.getByRole('button', { name: '设置', exact: true }).click()
+    const dialog2 = page.getByRole('dialog', { name: '设置' })
+    await expect(dialog2).toBeVisible()
+    await dialog2.getByRole('button', { name: '默认设置', exact: true }).click()
     await expect(page.getByLabel('自动重试')).toBeChecked()
     await expect(page.getByLabel('自动压缩上下文')).toBeChecked()
     await expect(page.getByLabel('HTTP 空闲超时（秒）')).toHaveValue('120')
@@ -646,19 +657,18 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     const settingsDialog = page.getByRole('dialog', { name: '设置' })
     await expect(settingsDialog).toBeVisible()
     const viewportHeight = await page.evaluate(() => window.innerHeight)
+    // Partitions are isolated behind the nav rail; enter providers first.
+    await settingsDialog.getByRole('button', { name: '模型提供商', exact: true }).click()
     // The providers section is entry-only: its heading sits at the top and is
-    // visible without scrolling. Earlier tests may leave a configured provider
-    // row in models.json, which pushes the defaults section below the fold —
-    // so that heading is asserted after scrolling into view instead of
-    // depending on the provider-list height.
+    // visible without scrolling.
     const providerBox = await page.getByRole('heading', { name: '模型提供商', exact: true }).boundingBox()
     expect(providerBox).not.toBeNull()
     expect((providerBox as { y: number; height: number }).y).toBeGreaterThanOrEqual(0)
     expect((providerBox as { y: number; height: number }).y + (providerBox as { y: number; height: number }).height).toBeLessThanOrEqual(
       viewportHeight,
     )
+    await settingsDialog.getByRole('button', { name: '默认设置', exact: true }).click()
     const defaultsHeading = page.getByRole('heading', { name: '默认设置', exact: true })
-    await defaultsHeading.scrollIntoViewIfNeeded()
     await expect(defaultsHeading).toBeVisible()
     await page.getByRole('button', { name: '关闭设置' }).click()
     await expect(settingsDialog).not.toBeVisible()
@@ -828,6 +838,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
   async function launch(): Promise<void> {
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     page.on('pageerror', (error) => pageErrors.push(String(error)))
@@ -848,8 +859,10 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
+    // The approval partition is isolated behind the nav rail; enter it first.
+    await dialog.getByRole('button', { name: '工具审批', exact: true }).click()
     const section = dialog.locator('[data-sett-approval]')
-    await section.scrollIntoViewIfNeeded()
+    await expect(section).toBeVisible()
     await expect(dialog.getByRole('heading', { name: /工具审批/ })).toBeVisible()
     return dialog
   }
@@ -864,6 +877,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     tempWorkspace = join(tempRoot, 'workspace')
     tempUserData = join(tempRoot, 'user-data')
     for (const dir of [tempHome, tempAgent, tempWorkspace, tempUserData]) mkdirSync(dir)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E managed-mode workspace\n')
     await launch()
   })
@@ -876,7 +890,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
   test('isolated env defaults to ask: snapshot, neutral badge, switch off', async () => {
     const snap = await page.evaluate(() => window.pi.getSnapshot())
     expect(snap.toolApprovalMode).toBe('ask')
-    const badge = page.getByRole('button', { name: /工具审批/ })
+    const badge = page.locator('.approval-badge')
     await expect(badge).toBeVisible()
     await expect(badge).toHaveClass(/approval-badge-ask/)
     await expect(badge).toContainText('逐次确认')
@@ -901,7 +915,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await expect(dialog.getByRole('switch')).not.toBeChecked()
     const snap = await page.evaluate(() => window.pi.getSnapshot())
     expect(snap.toolApprovalMode).toBe('ask')
-    await expect(page.getByRole('button', { name: /工具审批/ })).toHaveClass(/approval-badge-ask/)
+    await expect(page.locator('.approval-badge')).toHaveClass(/approval-badge-ask/)
     await page.getByRole('button', { name: '关闭设置' }).click()
     expect(pageErrors).toEqual([])
   })
@@ -915,7 +929,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await expect(dialog.getByText(/不再逐次确认；使用当前用户权限；不是沙箱/)).toBeVisible()
     const snap = await page.evaluate(() => window.pi.getSnapshot())
     expect(snap.toolApprovalMode).toBe('managed')
-    const badge = page.getByRole('button', { name: /工具审批/ })
+    const badge = page.locator('.approval-badge')
     await expect(badge).toHaveClass(/approval-badge-managed/)
     await expect(badge).toContainText('全托管 · 非沙箱')
     await page.getByRole('button', { name: '关闭设置' }).click()
@@ -927,7 +941,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await launch()
     const snap = await page.evaluate(() => window.pi.getSnapshot())
     expect(snap.toolApprovalMode).toBe('managed')
-    const badge = page.getByRole('button', { name: /工具审批/ })
+    const badge = page.locator('.approval-badge')
     await expect(badge).toHaveClass(/approval-badge-managed/)
     await expect(badge).toContainText('全托管 · 非沙箱')
     expect(pageErrors).toEqual([])
@@ -946,7 +960,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await launch()
     const after = await page.evaluate(() => window.pi.getSnapshot())
     expect(after.toolApprovalMode).toBe('ask')
-    await expect(page.getByRole('button', { name: /工具审批/ })).toHaveClass(/approval-badge-ask/)
+    await expect(page.locator('.approval-badge')).toHaveClass(/approval-badge-ask/)
     expect(pageErrors).toEqual([])
   })
 
@@ -958,7 +972,7 @@ test.describe.serial('Managed mode (tool approval) — isolated, no LLM', () => 
     await expect(dialog.getByRole('switch')).toBeChecked()
     await expect(dialog.getByText('已开启全托管模式')).toBeVisible()
     await page.getByRole('button', { name: '关闭设置' }).click()
-    await expect(page.getByRole('button', { name: /工具审批/ })).toHaveClass(/approval-badge-managed/)
+    await expect(page.locator('.approval-badge')).toHaveClass(/approval-badge-managed/)
 
     // (1) Topbar strip with the managed badge (sheet closed so it is not
     // covered by the overlay; measured so the 44px macOS drag strip above the

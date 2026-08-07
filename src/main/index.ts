@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { delimiter } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
 import { activateEngineVersion, deactivateEngine, findNpm, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
@@ -10,6 +10,8 @@ import { windowOptionsForPlatform } from './window-options'
 
 const runtime = new PiRuntime()
 let mainWindow: BrowserWindow | null = null
+let runtimeInitialized = false
+let runtimeInitialization: Promise<boolean> | null = null
 /** Persisted tool-approval policy; loaded before runtime.initialize and injected into the runtime. */
 let managedModeStore: ManagedModeStore | null = null
 
@@ -89,9 +91,49 @@ function textArg(value: unknown, name: string): string {
   return value
 }
 
+function editArg(value: unknown, name: string): SubagentEdit {
+  if (typeof value !== 'object' || value === null) throw new Error(`Invalid ${name}`)
+  const edit = value as Record<string, unknown>
+  if (typeof edit.name !== 'string' || typeof edit.description !== 'string' || typeof edit.systemPrompt !== 'string') {
+    throw new Error(`Invalid ${name}`)
+  }
+  return {
+    name: edit.name,
+    description: edit.description,
+    systemPrompt: edit.systemPrompt,
+    ...(Array.isArray(edit.tools) && edit.tools.every((t) => typeof t === 'string') ? { tools: edit.tools as string[] } : {}),
+    ...(typeof edit.model === 'string' ? { model: edit.model } : {}),
+  }
+}
+
+/**
+ * Starts the application runtime only after a user-configured engine exists.
+ * The promise gate prevents a first-run double-click from creating two
+ * sessions. When an engine is already running, switching remains a next-launch
+ * operation because ESM modules cannot be safely unloaded in-place.
+ */
+async function initializeRuntimeOnce(): Promise<boolean> {
+  if (runtimeInitialized) return true
+  if (runtimeInitialization !== null) return runtimeInitialization
+  runtimeInitialization = (async () => {
+    const engine = await loadEngineApi()
+    if (engine === null) return false
+    try {
+      await runtime.initialize(process.cwd())
+      runtimeInitialized = true
+      return true
+    } catch {
+      console.error('Pi initialization failed')
+      return false
+    }
+  })().finally(() => { runtimeInitialization = null })
+  return runtimeInitialization
+}
+
 app.whenReady().then(async () => {
-  // Load the pi engine (external version if activated, builtin otherwise) BEFORE
-  // the runtime starts; every runtime call reads this cached engine API.
+  // Probe the persisted user selection before the runtime starts. No selection
+  // is a normal first-run state: create the window and let the setup screen
+  // install one instead of importing a bundled fallback.
   await loadEngineApi()
   // Finder-launched GUI apps inherit a minimal PATH; make node/npm reachable
   // for the SDK's own npm invocations (package install/update) too.
@@ -109,8 +151,7 @@ app.whenReady().then(async () => {
   managedModeStore = new ManagedModeStore(app.getPath('userData'))
   try { await managedModeStore.load() } catch { /* load failure stays 'ask' */ }
   runtime.setToolApprovalMode(managedModeStore.getMode())
-  try { await runtime.initialize(process.cwd()) }
-  catch { console.error('Pi initialization failed') } // fixed text: the raw error may embed paths/credentials
+  await initializeRuntimeOnce()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow() })
 })
 
@@ -153,7 +194,7 @@ ipcMain.handle(IPC.appInfo, (): AppInfo => ({
   version: app.getVersion(),
   electron: process.versions.electron,
   platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux' ? process.platform : 'other',
-  agentDir: getEngineApi().getAgentDir(),
+  agentDir: getEngineStatus().active === null ? '' : getEngineApi().getAgentDir(),
 }))
 ipcMain.handle(IPC.dynamicCommands, () => runtime.getDynamicCommands())
 ipcMain.handle(IPC.extensions, () => runtime.getExtensions())
@@ -171,6 +212,7 @@ ipcMain.handle(IPC.prompt, (_event, text: unknown, images: unknown) => {
   return runtime.prompt(textArg(text, 'prompt'), images as ImageAttachment[] | undefined)
 })
 ipcMain.handle(IPC.abort, () => runtime.abort())
+ipcMain.handle(IPC.cancelSubagent, (_event, taskId: unknown) => runtime.cancelSubagent(textArg(taskId, 'subagent task id')))
 ipcMain.handle(IPC.model, (_event, provider: unknown, id: unknown) => runtime.setModel(textArg(provider, 'provider'), textArg(id, 'model')))
 ipcMain.handle(IPC.thinking, (_event, level: unknown) => {
   if (!isThinkingLevel(level)) throw new Error('Invalid thinking level')
@@ -205,9 +247,12 @@ ipcMain.handle(IPC.engineInstall, (_event, version: unknown) => {
   if (!isEngineVersion(version)) throw new Error('Invalid engine version')
   return installEngineVersion(version)
 })
-ipcMain.handle(IPC.engineActivate, (_event, version: unknown) => {
+ipcMain.handle(IPC.engineActivate, async (_event, version: unknown) => {
   if (!isEngineVersion(version)) throw new Error('Invalid engine version')
   activateEngineVersion(version)
+  // First-run activation can initialize immediately. Switching an already
+  // loaded engine remains effective after restart, as documented in the UI.
+  await initializeRuntimeOnce()
 })
 ipcMain.handle(IPC.engineUninstall, (_event, version: unknown) => {
   if (!isEngineVersion(version)) throw new Error('Invalid engine version')
@@ -228,6 +273,11 @@ ipcMain.handle(IPC.packageRemove, (_event, source: unknown) => {
   return runtime.removePackage(source)
 })
 ipcMain.handle(IPC.packageCheck, () => runtime.checkPackageUpdates())
+ipcMain.handle(IPC.subagents, () => runtime.listSubagents())
+ipcMain.handle(IPC.subagentSave, (_event, name: unknown, edit: unknown) =>
+  runtime.saveSubagent(textArg(name, 'subagent name'), editArg(edit, 'subagent edit')))
+ipcMain.handle(IPC.subagentDelete, (_event, name: unknown) =>
+  runtime.deleteSubagent(textArg(name, 'subagent name')))
 ipcMain.handle(IPC.customProvider, (_event, config: unknown) => {
   if (!isCustomProviderConfig(config)) throw new Error('Invalid custom provider config')
   return runtime.addCustomProvider(config)

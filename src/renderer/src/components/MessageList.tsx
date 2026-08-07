@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Brain, ChevronRight, UserRound } from 'lucide-react'
+import { Brain, ChevronRight, Shrink, UserRound } from 'lucide-react'
 import type { ChatMessage, ImageBlock, TextBlock } from '@shared/contracts'
 import ToolCall from './ToolCall'
 import Markdown from './Markdown'
@@ -152,6 +152,30 @@ function Message({ message }: { message: ChatMessage }) {
               <Markdown key={i} text={b.text} className="msg-text" />
             ))}
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (message.role === 'system') {
+    // System cards (currently: context compaction) carry a collapsed summary.
+    const text = message.blocks
+      .filter((b): b is TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('\n')
+    return (
+      <div className="msg msg-system">
+        <div className="msg-system-card">
+          <div className="msg-system-head">
+            <Shrink size={13} aria-hidden="true" />
+            <span>{t('messages.system.compactionTitle')}</span>
+          </div>
+          <details className="msg-system-body">
+            <summary>{t('messages.system.compactionToggle')}</summary>
+            <div className="msg-system-summary">
+              <Markdown text={text} className="msg-text" />
+            </div>
+          </details>
         </div>
       </div>
     )

@@ -1,7 +1,7 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, type Dirent } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { BrowserWindow, clipboard, dialog, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { BrowserWindow, clipboard, dialog, app, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -12,10 +12,11 @@ import type {
   SessionInfo,
   SessionManager,
 } from '@earendil-works/pi-coding-agent'
-import { getEngineApi } from './engine-loader'
+import { getEngineApi, getEnginePackagePath } from './engine-loader'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionGroup, SessionGroupsConfig, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
+  SubagentConfig, SubagentEdit,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
 import { canonicalizeEvenIfMissing } from './paths'
@@ -25,6 +26,63 @@ import { CUSTOM_PROVIDER_APIS, isPlainObject, sanitizeErrorText } from '../share
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
 const APPROVAL_TOOLS = new Set(['bash', 'edit', 'write'])
+const SUBAGENT_CONTROL_SYMBOL = Symbol.for('pi-studio.subagent-control')
+
+/** Bundled subagent agent definition files (deployed with the extension). */
+const SUBAGENT_AGENTS = ['scout', 'planner', 'reviewer', 'worker']
+
+/** Safe subagent definition file name: letters, digits, dot, dash, underscore. */
+const isSubagentName = (name: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)
+
+/** Single-line frontmatter value: newlines and YAML-significant chars removed. */
+const yamlValue = (value: string): string => value.replace(/[\r\n]+/g, ' ').replace(/[：“”"':]/g, '')
+
+/**
+ * Deploys and upgrades the Pi Studio-managed subagent extension. A directory
+ * is managed only when it carries our version marker; unrelated installs and
+ * dev symlinks are never touched. Changed managed files are backed up before
+ * an upgrade, while user-editable agent definitions are only created when
+ * missing.
+ */
+function deployBundledSubagent(agentDir: string, source: string): { deployed: boolean; error: string | null } {
+  try {
+    const extSource = join(source, 'extensions', 'subagent')
+    if (!existsSync(extSource)) return { deployed: false, error: null }
+    const extTarget = join(agentDir, 'extensions', 'subagent')
+    const agentTarget = join(agentDir, 'agents')
+    const marker = join(extTarget, '.pi-studio-version')
+    const targetExists = existsSync(extTarget)
+    if (targetExists) {
+      const stats = lstatSync(extTarget)
+      if (stats.isSymbolicLink() || !existsSync(marker)) return { deployed: false, error: null }
+    }
+    mkdirSync(extTarget, { recursive: true })
+    mkdirSync(agentTarget, { recursive: true })
+    const previousVersion = existsSync(marker) ? readFileSync(marker, 'utf8').trim() || 'unknown' : null
+    const backupDir = join(agentDir, 'backups', 'pi-studio-subagent', previousVersion ?? 'initial')
+    for (const file of ['index.ts', 'agents.ts']) {
+      const src = join(extSource, file)
+      const dst = join(extTarget, file)
+      if (!existsSync(src)) continue
+      if (existsSync(dst) && Buffer.compare(readFileSync(src), readFileSync(dst)) !== 0) {
+        mkdirSync(backupDir, { recursive: true })
+        copyFileSync(dst, join(backupDir, file))
+      }
+      copyFileSync(src, dst)
+    }
+    for (const name of SUBAGENT_AGENTS) {
+      const src = join(extSource, 'agents', `${name}.md`)
+      const dst = join(agentTarget, `${name}.md`)
+      if (existsSync(src) && !existsSync(dst)) copyFileSync(src, dst)
+    }
+    try {
+      writeFileSync(marker, app.getVersion())
+    } catch { /* marker is best-effort */ }
+    return { deployed: !targetExists || previousVersion !== app.getVersion(), error: null }
+  } catch (error) {
+    return { deployed: false, error: error instanceof Error ? error.message : 'unknown error' }
+  }
+}
 const RECORD = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 const textOf = (content: unknown): string => {
   if (typeof content === 'string') return content
@@ -82,6 +140,26 @@ const patchOf = (details: unknown): string | undefined => {
   if (typeof details.patch === 'string') return details.patch
   if (typeof details.diff === 'string') return details.diff
   return undefined
+}
+
+/**
+ * Drops heavyweight child transcripts from streamed details. Version 2 live
+ * events/output tails are already bounded by the extension and remain visible.
+ */
+const slimToolDetails = (details: unknown): unknown => {
+  if (
+    !RECORD(details) ||
+    !Array.isArray(details.results) ||
+    (details.mode !== 'single' && details.mode !== 'parallel' && details.mode !== 'chain')
+  ) return details
+  return {
+    ...details,
+    results: details.results.map((result: unknown) => {
+      if (!RECORD(result)) return result
+      const { messages: _messages, stderr: _stderr, ...bounded } = result
+      return bounded
+    }),
+  }
 }
 
 /**
@@ -367,6 +445,20 @@ export class PiRuntime {
 
   async initialize(cwd = process.cwd()): Promise<AppSnapshot> {
     try {
+      // Lets the bundled extension distinguish a GUI host whose tool_call
+      // gate performs project-agent approval from unattended JSON/print hosts.
+      process.env.PI_STUDIO_HOST = '1'
+      // One engine source of truth: the main SDK and every child CLI use the
+      // exact user-configured package. A shell-level PI_SUBAGENT_CLI override
+      // must not make GUI child agents silently run a different Pi.
+      delete process.env.PI_SUBAGENT_CLI
+      process.env.PI_SUBAGENT_ENGINE = getEnginePackagePath()
+      // First launch after install: deploy the bundled subagent extension
+      // into the user's agent dir (packaged asar is read-only, so copy).
+      const deployment = deployBundledSubagent(getEngineApi().getAgentDir(), app.getAppPath())
+      if (deployment.error !== null) {
+        this.recordError('Failed to deploy the bundled subagent extension', new Error(deployment.error))
+      }
       this.sessionGroups = loadSessionGroups(getEngineApi().getAgentDir())
       this.modelRuntime ??= await getEngineApi().ModelRuntime.create()
       await this.setWorkspace(cwd)
@@ -537,6 +629,29 @@ export class PiRuntime {
   private approvalExtension(): InlineExtension {
     return (pi) => {
       pi.on('tool_call', async (event) => {
+        if (event.toolName === 'subagent') {
+          const scope = event.input.agentScope
+          if (scope === 'project' || scope === 'both') {
+            const requested = Array.isArray(event.input.tasks)
+              ? event.input.tasks
+              : Array.isArray(event.input.chain)
+                ? event.input.chain
+                : [{ agent: event.input.agent, task: event.input.task }]
+            const detail = requested
+              .map((item) => RECORD(item) ? `${String(item.agent ?? 'unknown')}: ${clip(item.task ?? '', 240)}` : clip(item, 240))
+              .join('\n')
+            const win = this.dialogWindow()
+            const options: MessageBoxOptions = {
+              type: 'warning', title: 'Allow project subagents?',
+              message: 'Pi wants to run repository-controlled subagents',
+              detail: `${detail}\n\nProject agent prompts are controlled by this workspace.`,
+              buttons: ['Allow once', 'Deny'], defaultId: 1, cancelId: 1, noLink: true,
+            }
+            const result = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+            if (result.response !== 0) return { block: true, reason: 'Project subagents denied by user' }
+          }
+          return undefined
+        }
         if (!APPROVAL_TOOLS.has(event.toolName)) return undefined
         // Read the CURRENT mode at every tool_call: a dynamic switch affects
         // the very next call, while a dialog already awaiting keeps its own
@@ -573,10 +688,19 @@ export class PiRuntime {
     if (myEpoch !== this.epoch) return null
     const result = await getEngineApi().createAgentSession({
       cwd: this.workspace.path, modelRuntime: this.modelRuntime, sessionManager: manager,
-      resourceLoader: loader, tools: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      // Do not pass an explicit tool allowlist here. Pi treats `tools` as a
+      // hard allowlist for built-in AND extension tools, which made loaded
+      // extensions such as `subagent` visible in Settings but unavailable to
+      // the model. With no allowlist Pi activates every extension tool.
+      resourceLoader: loader,
     })
     if (myEpoch !== this.epoch) { await this.abandonSession(result.session); return null }
     const session = result.session
+    // Pi's default built-in set omits the read-only search helpers. Keep those
+    // helpers enabled without suppressing extension/custom tools.
+    session.setActiveToolsByName([
+      ...new Set([...session.getActiveToolNames(), 'grep', 'find', 'ls']),
+    ])
     try {
       await session.bindExtensions({
         onError: (error: ExtensionError) => {
@@ -906,6 +1030,16 @@ export class PiRuntime {
     })
   }
 
+  /** Cancels one child process registered by the bundled subagent extension. */
+  cancelSubagent(taskId: string): boolean {
+    if (!/^[a-zA-Z0-9._:-]{1,256}$/.test(taskId)) throw new Error('Invalid subagent task id')
+    const host = globalThis as typeof globalThis & Record<symbol, Map<string, () => void> | undefined>
+    const cancel = host[SUBAGENT_CONTROL_SYMBOL]?.get(taskId)
+    if (!cancel) return false
+    cancel()
+    return true
+  }
+
   setModel(provider: string, id: string): Promise<AppSnapshot> {
     return this.enqueue(async () => {
       try {
@@ -1047,6 +1181,23 @@ export class PiRuntime {
   }
 
   /**
+   * Reads the API key persisted in models.json for a provider, without ever
+   * exposing it to the renderer (used only to sign the connection test).
+   */
+  private storedProviderKey(providerId: string | undefined): string | undefined {
+    if (providerId === undefined || providerId === '') return undefined
+    try {
+      const raw = readFileSync(join(getEngineApi().getAgentDir(), 'models.json'), 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (!isPlainObject(parsed) || !isPlainObject(parsed.providers)) return undefined
+      const p = (parsed.providers as Record<string, unknown>)[providerId]
+      return RECORD(p) && typeof p.apiKey === 'string' && p.apiKey.length > 0 ? p.apiKey : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
    * Existing provider config for the edit dialog (API key never returned).
    * Reads models.json directly — the same file addCustomProvider writes. A
    * pi built-in configured by key only (no baseUrl/models in models.json) is
@@ -1074,11 +1225,20 @@ export class PiRuntime {
       if (baseUrl === '') return Promise.resolve(null)
       const api = CUSTOM_PROVIDER_APIS.includes(p.api as CustomProviderApi) ? (p.api as CustomProviderApi) : 'openai-completions'
       const name = typeof p.name === 'string' && p.name !== providerId ? p.name : undefined
-      const models: { id: string; name?: string }[] = []
+      const models: { id: string; name?: string; input?: ('text' | 'image')[]; contextWindow?: number }[] = []
       if (Array.isArray(p.models)) {
         for (const model of p.models) {
           if (!isPlainObject(model) || typeof model.id !== 'string') continue
-          models.push({ id: model.id, ...(typeof model.name === 'string' ? { name: model.name } : {}) })
+          const input = model.input
+          const ctx = model.contextWindow
+          models.push({
+            id: model.id,
+            ...(typeof model.name === 'string' && model.name.length > 0 ? { name: model.name } : {}),
+            ...(Array.isArray(input) && input.length > 0 && input.every((t) => t === 'text' || t === 'image')
+              ? { input: input as ('text' | 'image')[] }
+              : {}),
+            ...(typeof ctx === 'number' && Number.isFinite(ctx) && ctx >= 1 ? { contextWindow: ctx } : {}),
+          })
         }
       }
       return Promise.resolve({
@@ -1201,16 +1361,30 @@ export class PiRuntime {
           baseUrl: config.baseUrl,
           api: config.api,
           apiKey: config.apiKey && config.apiKey.length > 0 ? config.apiKey : previousKey,
-          models: config.models.map((m) => {
-            const existing = previousModels.find((pm) => pm.id === m.id)
-            if (existing) return existing
+        // Editing keeps every unknown stored model field (thinking maps,
+        // compat, …) but overlays the editable ones — name, input and
+        // contextWindow — so unchecking image support or clearing the
+        // context window in the dialog really persists. undefined values
+        // are dropped by JSON.stringify, which is exactly the "unset"
+        // semantics the UI expects.
+        models: config.models.map((m) => {
+          const existing = previousModels.find((pm) => pm.id === m.id)
+          if (existing) {
             return {
+              ...existing,
               id: m.id,
               name: m.name && m.name !== m.id ? m.name : undefined,
               input: m.input && m.input.length > 0 ? m.input : undefined,
               contextWindow: m.contextWindow,
             }
-          }),
+          }
+          return {
+            id: m.id,
+            name: m.name && m.name !== m.id ? m.name : undefined,
+            input: m.input && m.input.length > 0 ? m.input : undefined,
+            contextWindow: m.contextWindow,
+          }
+        }),
         }
         const tmpPath = `${modelsPath}.tmp`
         writeFileSync(tmpPath, JSON.stringify({ ...data, providers }, null, 2))
@@ -1377,9 +1551,12 @@ export class PiRuntime {
   }
 
   /**
-   * Provider connection test for the New-provider form: hits the
+   * Provider connection test for the New/Edit-provider form: hits the
    * OpenAI/Anthropic/Google-compatible `…/models` endpoint with the typed
-   * API key. Distinguishes auth failures (401/403) from plain HTTP errors
+   * API key. When no key is typed in the form but the test runs for an
+   * existing provider, the key stored in models.json is used instead — the
+   * dialog never shows it, but the test still reflects what a real request
+   * would send. Distinguishes auth failures (401/403) from plain HTTP errors
    * and network unreachability; never echoes the key back.
    */
   async testProviderConnection(config: ProviderConnectionTest): Promise<ConnectionTestResult> {
@@ -1395,7 +1572,12 @@ export class PiRuntime {
         return { ok: false, status: null, kind: 'network' }
       }
       const headers: Record<string, string> = {}
-      const key = config.apiKey?.trim()
+      // Typed key wins; otherwise reuse the key persisted in models.json for
+      // the provider being edited (the UI deliberately never receives it).
+      let key = config.apiKey?.trim()
+      if (key === undefined || key === '') {
+        key = this.storedProviderKey(config.providerId) ?? undefined
+      }
       if (config.api === 'anthropic-messages') {
         if (key) headers['x-api-key'] = key
         headers['anthropic-version'] = '2023-06-01'
@@ -1466,10 +1648,15 @@ export class PiRuntime {
     }
   }
 
-  /** File name without the script suffix, e.g. `~/…/hello.js` → `hello`. */
+  /**
+   * Human-friendly standalone extension name. Directory entrypoints use the
+   * directory (`subagent/index.ts` → `subagent`) instead of the generic
+   * label `index`.
+   */
   private extensionFileDisplayName(resolvedPath: string): string {
     const file = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath
-    return file.replace(/\.(js|ts|mjs|cjs)$/i, '')
+    const stem = file.replace(/\.(js|ts|mjs|cjs)$/i, '')
+    return stem.toLowerCase() === 'index' ? basename(dirname(resolvedPath)) || stem : stem
   }
 
   /**
@@ -1559,6 +1746,96 @@ export class PiRuntime {
     } catch {
       return Promise.resolve([])
     }
+  }
+
+  private subagentsDir(): string {
+    return join(getEngineApi().getAgentDir(), 'agents')
+  }
+
+  /** User-level subagent definitions (agents/*.md), parsed and sorted by name. */
+  listSubagents(): SubagentConfig[] {
+    const dir = this.subagentsDir()
+    if (!existsSync(dir)) return []
+    const agents: SubagentConfig[] = []
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    for (const entry of entries) {
+      if (!entry.name.endsWith('.md') || (!entry.isFile() && !entry.isSymbolicLink())) continue
+      const filePath = join(dir, entry.name)
+      let content: string
+      try {
+        content = readFileSync(filePath, 'utf8')
+      } catch {
+        continue
+      }
+      const parsed = getEngineApi().parseFrontmatter<Record<string, string>>(content)
+      const frontmatter = parsed.frontmatter
+      if (typeof frontmatter.name !== 'string' || typeof frontmatter.description !== 'string') continue
+      const tools = typeof frontmatter.tools === 'string'
+        ? frontmatter.tools.split(',').map((t) => t.trim()).filter(Boolean)
+        : undefined
+      agents.push({
+        name: frontmatter.name,
+        description: frontmatter.description,
+        ...(tools !== undefined && tools.length > 0 ? { tools } : {}),
+        ...(typeof frontmatter.model === 'string' && frontmatter.model !== '' ? { model: frontmatter.model } : {}),
+        systemPrompt: parsed.body,
+        filePath,
+      })
+    }
+    return agents.sort((a, b) => a.name.localeCompare(b.name))
+  }
+
+  /**
+   * Creates or overwrites a subagent definition. The name is the file key and
+   * is validated against path traversal. A pre-existing symlink target (e.g.
+   * a dev-time link into the repo) is replaced by a regular file so user
+   * edits never write through to the bundle source.
+   */
+  saveSubagent(name: string, edit: SubagentEdit): SubagentConfig[] {
+    if (!isSubagentName(name) || edit.name !== name || !isSubagentName(edit.name)) {
+      throw new Error('Invalid subagent name')
+    }
+    if (typeof edit.description !== 'string' || edit.description.trim() === '') {
+      throw new Error('Description is required')
+    }
+    const dir = this.subagentsDir()
+    mkdirSync(dir, { recursive: true })
+    const filePath = join(dir, `${name}.md`)
+    try {
+      const stats = lstatSync(filePath)
+      if (stats.isSymbolicLink()) unlinkSync(filePath)
+    } catch { /* not present or not a symlink */ }
+    const lines = [
+      '---',
+      `name: ${name}`,
+      `description: ${yamlValue(edit.description.trim())}`,
+    ]
+    if (Array.isArray(edit.tools) && edit.tools.length > 0) {
+      lines.push(`tools: ${edit.tools.map((t) => t.trim()).filter(Boolean).join(', ')}`)
+    }
+    if (typeof edit.model === 'string' && edit.model.trim() !== '') {
+      lines.push(`model: ${yamlValue(edit.model.trim())}`)
+    }
+    lines.push('---', '', edit.systemPrompt ?? '')
+    writeFileSync(filePath, `${lines.join('\n')}\n`, { encoding: 'utf8' })
+    return this.listSubagents()
+  }
+
+  /** Deletes a subagent definition (symlinks included) by validated name. */
+  deleteSubagent(name: string): SubagentConfig[] {
+    if (!isSubagentName(name)) throw new Error('Invalid subagent name')
+    const filePath = join(this.subagentsDir(), `${name}.md`)
+    try {
+      unlinkSync(filePath)
+    } catch {
+      throw new Error(`Subagent "${name}" does not exist`)
+    }
+    return this.listSubagents()
   }
 
   /** Registers a submitted runtime API key as a redaction target (memory only). */
@@ -1745,6 +2022,25 @@ export class PiRuntime {
       }
       case 'queue_update': this.queueCount = event.steering.length + event.followUp.length; break
       case 'compaction_start': this.runState = 'compacting'; this.statusText = 'Compacting context…'; break
+      case 'compaction_end': {
+        // Manual compaction only emits start/end (no agent_settled), so the
+        // compacting state must be restored here; automatic compaction is
+        // followed by agent_settled, and the second idle reset is harmless.
+        // A failed/aborted compaction surfaces as a recoverable error banner.
+        this.runState = 'idle'
+        this.statusText = 'Ready'
+        if (typeof event.errorMessage === 'string' && event.errorMessage.trim() !== '') {
+          this.lastError = {
+            message: 'Compaction failed',
+            detail: sanitizeErrorText(event.errorMessage, '', this.knownSecrets),
+            recoverable: true,
+          }
+        }
+        break
+      }
+      case 'summarization_retry_scheduled':
+        this.statusText = `Compaction retry (${event.attempt}/${event.maxAttempts})…`
+        break
       case 'auto_retry_start': this.runState = 'retrying'; this.statusText = `Retrying (${event.attempt}/${event.maxAttempts})…`; break
       case 'tool_execution_start': {
         // Occurrence-level FIFO: claim the next not-yet-started live
@@ -1760,13 +2056,18 @@ export class PiRuntime {
         const id = this.liveUpdateTarget(event.toolCallId)
         if (id === null) break
         const previous = this.liveTools.get(id)
-        // An update can arrive before its start: the target may hold no card
-        // yet, so create (or keep) its running block instead of dropping the
-        // partial result.
+        // The SDK forwards the FULL AgentToolResult (content + details) as
+        // partialResult. Streaming details are slimmed (messages dropped) so
+        // the subagent live view never ships a growing conversation over IPC;
+        // tool_execution_end replaces them with the complete payload.
+        const partial = RECORD(event.partialResult) ? event.partialResult : null
+        const details = partial !== null && RECORD(partial.details) ? slimToolDetails(partial.details) : null
+        const output = textOf(partial?.content) !== '' ? textOf(partial?.content) : clip(event.partialResult)
         this.liveTools.set(id, {
           type: 'tool', id, name: previous?.name ?? event.toolName,
           status: previous?.status ?? 'running', input: previous?.input ?? '',
-          output: clip(event.partialResult),
+          output,
+          ...(details !== null ? { details } : {}),
         })
         break
       }
@@ -1780,6 +2081,7 @@ export class PiRuntime {
           type: 'tool', id, name: event.toolName,
           status: event.isError ? 'error' : 'success', input: previous?.input ?? '', output: clip(event.result),
           ...(patch ? { patch } : {}),
+          ...(details !== null ? { details } : {}),
         })
         break
       }
@@ -1903,6 +2205,19 @@ export class PiRuntime {
         })
         return
       }
+      if (message.role === 'compactionSummary') {
+        // Compaction replaces the earlier history with a summary: surface it
+        // as a system card so the user sees what the context was reduced to.
+        // Malformed summaries (no string) are dropped like any other unknown.
+        if (typeof message.summary !== 'string') return
+        messages.push({
+          id: `compaction-${messageIndex}-${timestamp ?? 0}`,
+          role: 'system',
+          blocks: [{ type: 'text', text: message.summary }],
+          ...(timestamp ? { timestamp } : {}),
+        })
+        return
+      }
       if (message.role === 'assistant') {
         const ordinal = assistantOrdinal
         assistantOrdinal += 1
@@ -1942,6 +2257,7 @@ export class PiRuntime {
    */
   private toolResultToBlock(message: Record<string, unknown>): ToolBlock {
     const patch = patchOf(message.details)
+    const details = RECORD(message.details) ? message.details : null
     return {
       type: 'tool',
       id: String(message.toolCallId),
@@ -1950,6 +2266,7 @@ export class PiRuntime {
       input: '',
       output: textOf(message.content),
       ...(patch ? { patch } : {}),
+      ...(details !== null ? { details } : {}),
     }
   }
 

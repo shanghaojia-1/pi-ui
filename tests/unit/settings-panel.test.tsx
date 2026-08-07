@@ -60,6 +60,7 @@ const api = {
   getExtensions: vi.fn().mockResolvedValue({ extensions: [], errors: [] }),
   getProviderConfig: vi.fn(),
   getProviderTypes: vi.fn().mockResolvedValue([]),
+  testProviderConnection: vi.fn(),
   saveProviderKey: vi.fn(),
   addCustomProvider: vi.fn(),
   getEngineStatus: vi.fn().mockResolvedValue({
@@ -81,6 +82,9 @@ const api = {
   updatePackages: vi.fn(),
   removePackage: vi.fn(),
   checkPackageUpdates: vi.fn().mockResolvedValue([]),
+  listSubagents: vi.fn().mockResolvedValue([]),
+  saveSubagent: vi.fn().mockResolvedValue([]),
+  deleteSubagent: vi.fn().mockResolvedValue([]),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>
@@ -102,9 +106,14 @@ function renderPanel(ui: React.ReactElement) {
   return render(<I18nProvider initialLang="zh">{ui}</I18nProvider>)
 }
 
+/** Clicks the settings nav rail entry for the given partition. */
+function gotoNav(name: string): void {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
 async function renderReady() {
   const utils = renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-  await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+  await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
   return utils
 }
 
@@ -115,6 +124,8 @@ describe('SettingsPanel', () => {
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
     expect(screen.getByText('正在加载设置…')).toBeTruthy()
     resolve(settings())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
     await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
     // Entry buttons; no interactive provider list, search or key panel — the
     // active provider/model is chosen in the chat dialog, and new ones are
@@ -132,7 +143,7 @@ describe('SettingsPanel', () => {
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
     await waitFor(() => expect(screen.getByText(/无法加载设置：boom/)).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '重试' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     expect(api.getSettings).toHaveBeenCalledTimes(2)
   })
 
@@ -148,6 +159,8 @@ describe('SettingsPanel', () => {
       }),
     )
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
     await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
     expect(screen.getByRole('button', { name: /刷新模型列表/ })).toBeTruthy()
     // Read-only configured-provider cards with auth source and model count.
@@ -189,6 +202,8 @@ describe('SettingsPanel', () => {
       builtin: false,
     })
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
     await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     await waitFor(() => expect(screen.getByRole('dialog', { name: '编辑供应商' })).toBeTruthy())
@@ -216,6 +231,8 @@ describe('SettingsPanel', () => {
     ])
     vi.mocked(api.saveProviderKey).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
     await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: '新建供应商' }))
     await waitFor(() => expect(screen.getByRole('dialog', { name: '添加自定义提供商' })).toBeTruthy())
@@ -231,6 +248,90 @@ describe('SettingsPanel', () => {
     await waitFor(() => expect(api.saveProviderKey).toHaveBeenCalledWith('deepseek', 'sk-ds'))
     expect(api.addCustomProvider).not.toHaveBeenCalled()
   })
+  it('custom flow: per-model display name, context window and image input round-trip to addCustomProvider', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.addCustomProvider).mockResolvedValue(settings())
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '新建供应商' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '添加自定义提供商' })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('提供商 ID（必填）'), { target: { value: 'my-ollama' } })
+    fireEvent.change(screen.getByLabelText('Base URL（必填）'), { target: { value: 'http://localhost:11434/v1' } })
+    // Add a model, then configure it per-model.
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'llama3.1:8b' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加模型' }))
+    expect(screen.getByText('llama3.1:8b')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('模型显示名称（可选）'), { target: { value: 'Llama 3.1 8B' } })
+    fireEvent.change(screen.getByLabelText('上下文窗口'), { target: { value: '128000' } })
+    expect(screen.getByText('≈ 128.0k')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '图片' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加提供商' }))
+    await waitFor(() => expect(api.addCustomProvider).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.addCustomProvider).mock.calls[0]![0]).toEqual({
+      id: 'my-ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      api: 'openai-completions',
+      models: [{ id: 'llama3.1:8b', name: 'Llama 3.1 8B', input: ['text', 'image'], contextWindow: 128000 }],
+    })
+  })
+
+  it('custom flow: invalid per-model context window blocks saving with a message', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.addCustomProvider).mockResolvedValue(settings())
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '新建供应商' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '添加自定义提供商' })).toBeTruthy())
+    fireEvent.change(screen.getByLabelText('提供商 ID（必填）'), { target: { value: 'my-ollama' } })
+    fireEvent.change(screen.getByLabelText('Base URL（必填）'), { target: { value: 'http://localhost:11434/v1' } })
+    fireEvent.change(screen.getByLabelText('模型 ID'), { target: { value: 'm1' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加模型' }))
+    fireEvent.change(screen.getByLabelText('上下文窗口'), { target: { value: '0' } })
+    fireEvent.click(screen.getByRole('button', { name: '添加提供商' }))
+    await waitFor(() => expect(screen.getByText('上下文窗口必须是大于 0 的整数（tokens）')).toBeTruthy())
+    expect(api.addCustomProvider).not.toHaveBeenCalled()
+  })
+  it('edit-mode connection test sends the provider id so main can reuse the stored key', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(
+      settings({
+        providers: [
+          { id: 'ollama', name: 'Local Ollama', authStatus: 'stored', authLabel: null, credentialType: 'api-key', availableModelCount: 1 },
+        ],
+      }),
+    )
+    vi.mocked(api.getProviderConfig).mockResolvedValue({
+      id: 'ollama',
+      name: 'Local Ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      api: 'openai-completions',
+      models: [{ id: 'm' }],
+      hasApiKey: true,
+      builtin: false,
+    })
+    vi.mocked(api.testProviderConnection).mockResolvedValue({ ok: true, status: 200, kind: 'ok' })
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
+    await waitFor(() => expect(screen.getByRole('button', { name: '编辑' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }))
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '编辑供应商' })).toBeTruthy())
+    // Blank key field + saved key hint: the test must reuse the stored key.
+    expect((screen.getByLabelText('API Key（可选）') as HTMLInputElement).value).toBe('')
+    expect(screen.getByText('未输入新 Key 时，测试将使用 models.json 中已保存的 Key。')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    await waitFor(() =>
+      expect(api.testProviderConnection).toHaveBeenCalledWith({
+        providerId: 'ollama',
+        baseUrl: 'http://localhost:11434/v1',
+        api: 'openai-completions',
+      }),
+    )
+    await waitFor(() => expect(screen.getByText('连接成功')).toBeTruthy())
+  })
 
 
 
@@ -240,7 +341,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     vi.mocked(api.updateSettings).mockResolvedValue(settings({ httpIdleTimeoutMs: 30_000 }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('HTTP 空闲超时（秒）'), { target: { value: '30' } })
     fireEvent.click(screen.getByRole('button', { name: '保存默认设置' }))
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
@@ -258,7 +361,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(initial)
     vi.mocked(api.updateSettings).mockResolvedValue({ ...initial, compactionEnabled: true })
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     fireEvent.click(screen.getByLabelText('自动压缩上下文'))
     fireEvent.click(screen.getByRole('button', { name: '保存默认设置' }))
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
@@ -269,7 +374,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     vi.mocked(api.updateSettings).mockResolvedValue(settings({ defaultProvider: 'anthropic', defaultModel: 'claude-sonnet' }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('默认模型'), { target: { value: 'anthropic:claude-sonnet' } })
     fireEvent.click(screen.getByRole('button', { name: '保存默认设置' }))
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledTimes(1))
@@ -282,7 +389,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings({ defaultProvider: 'anthropic', defaultModel: 'claude-sonnet' }))
     vi.mocked(api.updateSettings).mockResolvedValue(settings({ defaultProvider: 'openai', defaultModel: 'gpt-4o' }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     const modelSel = screen.getByLabelText('默认模型') as HTMLSelectElement
     expect(modelSel.value).toBe('anthropic:claude-sonnet')
     fireEvent.change(modelSel, { target: { value: 'openai:gpt-4o' } })
@@ -300,7 +409,9 @@ describe('SettingsPanel', () => {
     const saved = settings({ retryEnabled: true, httpIdleTimeoutMs: 30_000, defaultProvider: 'anthropic', defaultModel: 'claude-sonnet' })
     vi.mocked(api.updateSettings).mockResolvedValue(saved)
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
 
     fireEvent.change(screen.getByLabelText('HTTP 空闲超时（秒）'), { target: { value: '30' } })
     fireEvent.click(screen.getByLabelText('自动重试'))
@@ -329,7 +440,9 @@ describe('SettingsPanel', () => {
   it('rejects out-of-range timeout without calling updateSettings', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     fireEvent.change(screen.getByLabelText('HTTP 空闲超时（秒）'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: '保存默认设置' }))
     await waitFor(() => expect(screen.getByText(/1–600 秒之间/)).toBeTruthy())
@@ -341,7 +454,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     vi.mocked(api.refreshModels).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('模型提供商')
+    await waitFor(() => expect(screen.getByRole('button', { name: /刷新模型列表/ })).toBeTruthy())
     fireEvent.click(screen.getByRole('button', { name: /刷新模型列表/ }))
     await waitFor(() => expect(api.refreshModels).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(screen.getByText('模型列表已刷新')).toBeTruthy())
@@ -350,7 +465,9 @@ describe('SettingsPanel', () => {
   it('shows read-only compaction/retry values', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByText('压缩保留')).toBeTruthy())
     expect(screen.getByText('压缩保留')).toBeTruthy()
     expect(screen.getByText('40.0k')).toBeTruthy() // reserveTokens via formatTokens
     expect(screen.getByText('20.0k')).toBeTruthy() // keepRecentTokens
@@ -364,7 +481,7 @@ describe('SettingsPanel', () => {
     trigger.focus()
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     const { unmount } = renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     const dialog = screen.getByRole('dialog', { name: '设置' })
     expect(dialog.getAttribute('aria-modal')).toBe('true')
     expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭设置')
@@ -378,7 +495,7 @@ describe('SettingsPanel', () => {
   it('clicks on the backdrop (outside the sheet) close the dialog; clicks inside do not', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     const overlay = document.querySelector('.sett-overlay') as HTMLElement
     const sheet = document.querySelector('.sett-sheet') as HTMLElement
     expect(overlay).toBeTruthy()
@@ -396,7 +513,9 @@ describe('SettingsPanel', () => {
   it('shows the danger partition: ask copy, switch off, neutral pill, aria-live status', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('heading', { name: /工具审批/ })).toBeTruthy())
     expect(screen.getByRole('heading', { name: /工具审批/ })).toBeTruthy()
     const sw = screen.getByRole('switch')
     expect((sw as HTMLInputElement).checked).toBe(false) // ask = off
@@ -414,7 +533,9 @@ describe('SettingsPanel', () => {
   it('managed state: switch on, high-risk copy, managed pill and section class', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings({ toolApprovalMode: 'managed' }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(true)
     expect(screen.getByText('全托管', { selector: '.sett-approval-pill' })).toBeTruthy()
     expect(
@@ -427,7 +548,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     vi.mocked(api.setToolApprovalMode).mockResolvedValue(settings({ toolApprovalMode: 'managed' }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     fireEvent.click(sw)
     await waitFor(() => expect(api.setToolApprovalMode).toHaveBeenCalledWith('managed'))
@@ -440,7 +563,9 @@ describe('SettingsPanel', () => {
     // main returns the unchanged ask settings when the native dialog is cancelled
     vi.mocked(api.setToolApprovalMode).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     fireEvent.click(sw)
     await waitFor(() => expect(api.setToolApprovalMode).toHaveBeenCalledWith('managed'))
@@ -453,7 +578,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings({ toolApprovalMode: 'managed' }))
     vi.mocked(api.setToolApprovalMode).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     expect(sw.checked).toBe(true)
     fireEvent.click(sw)
@@ -468,7 +595,9 @@ describe('SettingsPanel', () => {
       settings({ error: { message: '保存工具审批模式失败', recoverable: true } }),
     )
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     fireEvent.click(sw)
     await waitFor(() => expect(screen.getByText('保存工具审批模式失败')).toBeTruthy())
@@ -479,7 +608,9 @@ describe('SettingsPanel', () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     vi.mocked(api.setToolApprovalMode).mockRejectedValueOnce(new Error('ipc boom'))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     fireEvent.click(sw)
     await waitFor(() => expect(screen.getByText(/ipc boom/)).toBeTruthy())
@@ -494,7 +625,9 @@ describe('SettingsPanel', () => {
     let resolve!: (s: SettingsSnapshot) => void
     vi.mocked(api.setToolApprovalMode).mockReturnValue(new Promise((res) => (resolve = res)))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('工具审批')
+    await waitFor(() => expect(screen.getByRole('switch')).toBeTruthy())
     const sw = screen.getByRole('switch') as HTMLInputElement
     fireEvent.click(sw)
     await waitFor(() => expect(sw.disabled).toBe(true))
@@ -509,21 +642,141 @@ describe('SettingsPanel', () => {
     // response with a different read-only snapshot than the draft
     vi.mocked(api.setToolApprovalMode).mockResolvedValue(settings({ toolApprovalMode: 'managed' }))
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('默认设置')
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存默认设置' })).toBeTruthy())
     // unsaved draft
     const timeout = screen.getByLabelText('HTTP 空闲超时（秒）') as HTMLInputElement
     fireEvent.change(timeout, { target: { value: '30' } })
     // toggle the mode
+    gotoNav('工具审批')
     fireEvent.click(screen.getByRole('switch'))
     await waitFor(() => expect(screen.getByText('已开启全托管模式')).toBeTruthy())
     // the unsaved draft was not reset by the merge
     expect(timeout.value).toBe('30')
   })
 
-  it('opened with initialSection="approval": scrolls to and focuses the approval switch', async () => {
+  it('opened with initialSection="approval": activates the approval partition and focuses the switch', async () => {
     vi.mocked(api.getSettings).mockResolvedValue(settings())
     renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} initialSection="approval" />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '新建供应商' })).toBeTruthy())
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     await waitFor(() => expect(document.activeElement?.hasAttribute('data-sett-approval-toggle')).toBe(true))
+  })
+
+  // ---------- settings navigation rail ----------
+
+  it('renders the section navigation rail and highlights the clicked entry', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    const nav = screen.getByRole('navigation', { name: '设置分区' })
+    const items = nav.querySelectorAll('.sett-nav-item')
+    expect(items.length).toBe(7)
+    expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('外观')
+    const approval = Array.from(items).find((b) => b.textContent === '工具审批') as HTMLElement
+    fireEvent.click(approval)
+    expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('工具审批')
+  })
+
+  it('initialSection="approval" activates the approval entry in the rail', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} initialSection="approval" />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    const nav = screen.getByRole('navigation', { name: '设置分区' })
+    expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('工具审批')
+  })
+
+  // ---------- subagents ----------
+
+  const AGENTS = [
+    {
+      name: 'scout',
+      description: 'Fast recon',
+      tools: ['read', 'grep', 'find', 'ls', 'bash'],
+      model: 'claude-haiku-4-5',
+      systemPrompt: 'Recon quickly.',
+      filePath: '/agent/agents/scout.md',
+    },
+    {
+      name: 'worker',
+      description: 'General purpose',
+      systemPrompt: 'Do work.',
+      filePath: '/agent/agents/worker.md',
+    },
+  ]
+
+  it('lists subagents with model and tool chips after navigating to the partition', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.listSubagents).mockResolvedValue(AGENTS)
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('子代理')
+    await waitFor(() => expect(screen.getByText('scout')).toBeTruthy())
+    expect(screen.getByText('Fast recon')).toBeTruthy()
+    expect(screen.getByText('claude-haiku-4-5')).toBeTruthy()
+    expect(screen.getByText('read')).toBeTruthy()
+    expect(screen.getByText('bash')).toBeTruthy()
+    expect(screen.getByText('worker')).toBeTruthy()
+    expect(screen.getByText('General purpose')).toBeTruthy()
+    expect(api.listSubagents).toHaveBeenCalledTimes(1)
+  })
+
+  it('creates a subagent through the inline editor and refreshes the list', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.listSubagents).mockResolvedValue([])
+    vi.mocked(api.saveSubagent).mockResolvedValue(AGENTS)
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('子代理')
+    await waitFor(() => expect(screen.getByText('还没有子代理，点“新建子代理”创建一个。')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '新建子代理' }))
+    fireEvent.change(screen.getByLabelText('名称（文件名，不可改）'), { target: { value: 'debugger' } })
+    fireEvent.change(screen.getByLabelText('描述'), { target: { value: 'Finds bugs' } })
+    // Model picker (catalog-driven) + tool toggle chips.
+    fireEvent.change(screen.getByLabelText('模型（可选）'), { target: { value: 'claude-haiku' } })
+    fireEvent.click(screen.getByRole('button', { name: 'read' }))
+    fireEvent.click(screen.getByRole('button', { name: 'bash' }))
+    fireEvent.change(screen.getByLabelText('系统提示词'), { target: { value: 'Hunt bugs.' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存子代理' }))
+    await waitFor(() => expect(api.saveSubagent).toHaveBeenCalledWith('debugger', {
+      name: 'debugger',
+      description: 'Finds bugs',
+      model: 'claude-haiku',
+      tools: ['read', 'bash'],
+      systemPrompt: 'Hunt bugs.',
+    }))
+    await waitFor(() => expect(screen.getByText('scout')).toBeTruthy()) // refreshed list
+  })
+
+  it('validates the name and refuses to save empty descriptions', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.listSubagents).mockResolvedValue([])
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('子代理')
+    await waitFor(() => expect(screen.getByRole('button', { name: '新建子代理' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '新建子代理' }))
+    fireEvent.change(screen.getByLabelText('名称（文件名，不可改）'), { target: { value: '../evil' } })
+    fireEvent.change(screen.getByLabelText('描述'), { target: { value: 'x' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存子代理' }))
+    await waitFor(() => expect(screen.getByText('请输入名称（字母/数字/.-_）')).toBeTruthy())
+    expect(api.saveSubagent).not.toHaveBeenCalled()
+  })
+
+  it('deletes a subagent after confirmation', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.listSubagents).mockResolvedValue(AGENTS)
+    vi.mocked(api.deleteSubagent).mockResolvedValue(AGENTS.slice(1))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('子代理')
+    await waitFor(() => expect(screen.getByText('scout')).toBeTruthy())
+    fireEvent.click(screen.getAllByRole('button', { name: '删除' })[0]!)
+    await waitFor(() => expect(api.deleteSubagent).toHaveBeenCalledWith('scout'))
+    expect(confirmSpy).toHaveBeenCalledWith('确定删除子代理“scout”？')
+    // The refreshed list no longer shows the deleted agent.
+    await waitFor(() => expect(screen.queryByText('scout')).toBeNull())
+    confirmSpy.mockRestore()
   })
 })

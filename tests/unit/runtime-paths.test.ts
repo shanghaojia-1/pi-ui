@@ -12,11 +12,13 @@ const mocks = vi.hoisted(() => ({
   SessionManager: { create: vi.fn(), open: vi.fn(), list: vi.fn(), listAll: vi.fn() },
   DefaultResourceLoader: vi.fn(),
   dialog: { showOpenDialog: vi.fn(), showMessageBox: vi.fn() },
+  app: { getAppPath: vi.fn(() => '/tmp/pi-app'), getVersion: vi.fn(() => '0.1.0') },
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: class BrowserWindow {},
   dialog: mocks.dialog,
+  app: mocks.app,
 }))
 
 vi.mock('@earendil-works/pi-coding-agent', () => ({
@@ -38,6 +40,7 @@ vi.mock('../../src/main/engine-loader', () => ({
     SessionManager: mocks.SessionManager,
     DefaultPackageManager: class DefaultPackageManager {},
   }),
+  getEnginePackagePath: () => '/tmp/pi-engine',
 }))
 
 const TMP = realpathSync(tmpdir())
@@ -59,6 +62,7 @@ class FakeSession {
   thinkingLevel = 'medium'
   isStreaming = false
   disposed = false
+  activeToolNames = ['read', 'bash', 'edit', 'write', 'subagent']
   private subscriber: ((event: unknown) => void) | null = null
   prompt(): Promise<unknown> { return Promise.resolve() }
   clearQueue(): void {}
@@ -66,6 +70,8 @@ class FakeSession {
   dispose(): void { this.disposed = true }
   subscribe(cb: (event: unknown) => void): () => void { this.subscriber = cb; return () => { this.subscriber = null } }
   async bindExtensions(): Promise<void> {}
+  getActiveToolNames(): string[] { return [...this.activeToolNames] }
+  setActiveToolsByName(names: string[]): void { this.activeToolNames = [...names] }
   async setModel(): Promise<void> {}
   setThinkingLevel(): void {}
 }

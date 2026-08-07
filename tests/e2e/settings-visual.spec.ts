@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron, expect, test, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { seedConfiguredEngine } from './engine-fixture'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(HERE, '../..')
@@ -83,8 +84,10 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
 
     const tempUserData = join(tempRoot, 'user-data')
     mkdirSync(tempUserData)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({
       args: [PROJECT_ROOT],
       cwd: tempWorkspace,
@@ -142,6 +145,8 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
   }
 
   async function assertProvidersEntry(dialog: Locator): Promise<void> {
+    // The providers partition is isolated behind the nav rail; enter it first.
+    await dialog.getByRole('button', { name: '模型提供商', exact: true }).click()
     // The settings page offers entry points (New provider / refresh) plus a
     // read-only list of already-configured providers; the active provider is
     // chosen in the chat dialog, and there is no interactive key panel here.
@@ -214,6 +219,7 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
     await settingsBtn.click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '默认设置', exact: true }).click()
     await expect(page.getByRole('button', { name: '保存默认设置' })).toBeVisible()
 
     await assertDialogInViewport(dialog)
@@ -241,6 +247,7 @@ test.describe.serial('Settings visuals & telemetry from a seeded session (isolat
     await settingsBtn.click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '默认设置', exact: true }).click()
     await expect(page.getByRole('button', { name: '保存默认设置' })).toBeVisible()
 
     await assertDialogInViewport(dialog)

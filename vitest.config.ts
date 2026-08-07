@@ -6,6 +6,9 @@ export default defineConfig({
     alias: {
       '@shared': resolve('src/shared'),
       '@renderer': resolve('src/renderer/src'),
+      '@earendil-works/pi-agent-core': resolve('node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-agent-core'),
+      '@earendil-works/pi-ai': resolve('node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai'),
+      typebox: resolve('node_modules/@earendil-works/pi-coding-agent/node_modules/typebox'),
     },
   },
   test: {

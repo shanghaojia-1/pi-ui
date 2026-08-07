@@ -28,7 +28,6 @@
     "verify:artifacts": "node scripts/verify-artifacts.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.83.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -38,6 +37,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.83.0",
     "@electron/asar": "^4.2.1",
     "@playwright/test": "^1.51.0",
     "@resvg/resvg-js": "^2.6.2",
@@ -69,6 +69,7 @@
     "artifactName": "Pi-Studio-${version}-${os}-${arch}.${ext}",
     "files": [
       "out/**",
+      "extensions/**",
       "package.json",
       "!**/.pi/**",
       "!**/auth*.json",

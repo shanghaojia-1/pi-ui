@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { seedConfiguredEngine } from './engine-fixture'
 
 /**
  * Extension loading + dynamic slash-command integration: a seeded extension
@@ -47,8 +48,10 @@ test.describe.serial('extensions (isolated)', () => {
     )
     const tempUserData = join(tempRoot, 'user-data')
     mkdirSync(tempUserData)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
@@ -61,15 +64,15 @@ test.describe.serial('extensions (isolated)', () => {
 
   test('seeded extension is loaded: settings lists it with command + handler counts', async () => {
     const info = await page.evaluate(() => window.pi.getExtensions())
-    // Only the user-installed hello.js shows up — built-in inline extensions
-    // (e.g. the tool-approval helper) are filtered out of the list.
-    expect(info.extensions).toHaveLength(1)
-    const ext = info.extensions[0]!
-    expect(ext.path).toContain('hello.js')
-    expect(ext.name).toBe('hello') // display name = file name without suffix
-    expect(ext.sourceLabel).toBe('user')
-    expect(ext.commandCount).toBe(1)
-    expect(ext.handlerCount).toBe(1)
+    // The user-installed hello.js shows up alongside the automatically
+    // deployed bundled subagent extension; built-in inline extensions (e.g.
+    // the tool-approval helper) are filtered out of the list.
+    const hello = info.extensions.find((e) => e.path.includes('hello.js'))
+    expect(hello).toBeTruthy()
+    expect(hello!.name).toBe('hello') // display name = file name without suffix
+    expect(hello!.sourceLabel).toBe('user')
+    expect(hello!.commandCount).toBe(1)
+    expect(hello!.handlerCount).toBe(1)
     expect(info.errors).toEqual([])
 
     // Settings panel: Extensions section shows the extension by its display
@@ -77,6 +80,7 @@ test.describe.serial('extensions (isolated)', () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '设置' })
     await expect(dialog).toBeVisible()
+    await dialog.getByRole('button', { name: '扩展', exact: true }).click()
     await expect(dialog.getByRole('heading', { name: '扩展' })).toBeVisible()
     const extCard = dialog.locator('.sett-extension').filter({ hasText: 'hello' })
     await expect(extCard).toHaveCount(1)

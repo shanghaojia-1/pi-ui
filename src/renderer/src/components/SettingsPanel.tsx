@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Image as ImageIcon, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
   CustomProviderApi,
@@ -10,6 +10,8 @@ import type {
   ProviderTypeInfo,
   SettingsPatch,
   SettingsSnapshot,
+  SubagentConfig,
+  SubagentEdit,
   ThinkingLevel,
   ToolApprovalMode,
 } from '@shared/contracts'
@@ -29,6 +31,9 @@ const AUTH_KEYS: Record<ProviderStatus['authStatus'], string> = {
   error: 'settings.auth.error',
 }
 
+/** Tool presets offered as click-to-toggle chips in the subagent editor. */
+const SUBAGENT_TOOL_OPTIONS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write']
+
 const THINKING_KEYS: { value: ThinkingLevel; labelKey: string }[] = [
   { value: 'off', labelKey: 'topbar.thinking.off' },
   { value: 'minimal', labelKey: 'topbar.thinking.minimal' },
@@ -42,7 +47,30 @@ const THINKING_KEYS: { value: ThinkingLevel; labelKey: string }[] = [
 const TIMEOUT_MIN_S = HTTP_IDLE_TIMEOUT_MIN_MS / 1000
 const TIMEOUT_MAX_S = HTTP_IDLE_TIMEOUT_MAX_MS / 1000
 
-type BusyAction = 'refresh' | 'save' | 'approval' | 'custom' | null
+/** One model draft in the New/Edit-provider dialog (id is the unique key). */
+interface CustomModelDraft {
+  id: string
+  /** Optional display name; falls back to the id. */
+  name?: string | undefined
+  /** Context window in tokens; undefined = engine default. */
+  contextWindow?: number | undefined
+  /** Supported input formats; undefined = text-only default. */
+  input?: ('text' | 'image')[] | undefined
+}
+
+/** Settings sections shown in the left navigation rail. */
+const NAV_ITEMS = [
+  { id: 'appearance', labelKey: 'settings.appearance' },
+  { id: 'providers', labelKey: 'settings.providers' },
+  { id: 'subagents', labelKey: 'settings.subagents' },
+  { id: 'extensions', labelKey: 'settings.extensions' },
+  { id: 'engine', labelKey: 'settings.engine' },
+  { id: 'defaults', labelKey: 'settings.defaults' },
+  { id: 'approval', labelKey: 'settings.approval' },
+] as const
+type NavId = (typeof NAV_ITEMS)[number]['id']
+
+type BusyAction = 'refresh' | 'save' | 'approval' | 'custom' | 'delete' | null
 
 interface LiveMessage {
   kind: 'success' | 'error' | 'info'
@@ -84,6 +112,20 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
+  /** User-level subagent definitions for the Subagents section. */
+  const [subagents, setSubagents] = useState<SubagentConfig[] | null>(null)
+  /** Subagent editor state: open + the file key being edited (null = create). */
+  const [subagentEditor, setSubagentEditor] = useState<{
+    open: boolean
+    editingName: string | null
+    name: string
+    description: string
+    /** Selected model id (empty = follow the default model). */
+    model: string
+    /** Selected tool ids (empty = the agent's own defaults). */
+    tools: string[]
+    systemPrompt: string
+  }>({ open: false, editingName: null, name: '', description: '', model: '', tools: [], systemPrompt: '' })
   /** Configured packages (pi package manager) for the Extensions section. */
   const [packagesInfo, setPackagesInfo] = useState<PackagesInfo | null>(null)
   const [packageInput, setPackageInput] = useState('')
@@ -106,16 +148,18 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [customApi, setCustomApi] = useState<CustomProviderApi>('openai-completions')
   const [customApiKey, setCustomApiKey] = useState('')
   /** Models of the new provider, added one by one. */
-  const [customModels, setCustomModels] = useState<{ id: string }[]>([])
+  const [customModels, setCustomModels] = useState<CustomModelDraft[]>([])
   const [modelInput, setModelInput] = useState('')
-  const [customImage, setCustomImage] = useState(false)
   /** Selectable provider types (pi built-ins + custom), from main. */
   const [providerTypes, setProviderTypes] = useState<ProviderTypeInfo[]>([])
   /** Connection-test state for the New-provider modal. */
   const [testResult, setTestResult] = useState<{ testing: boolean } | { testing: false; ok: boolean; status: number | null; kind: 'ok' | 'auth' | 'http' | 'network' }>({ testing: false })
 
   const sheetRef = useRef<HTMLElement>(null)
+  const navRef = useRef<HTMLElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
+  /** Currently active settings partition (tab-style isolation). */
+  const [activeNav, setActiveNav] = useState<NavId>(initialSection === 'approval' ? 'approval' : 'appearance')
   // Only the section requested at open time is auto-focused; once handled it
   // is cleared so a later re-render can never re-scroll the sheet.
   const pendingSectionRef = useRef<'approval' | null>(initialSection ?? null)
@@ -164,6 +208,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     window.pi.getExtensions().then(setExtensionsInfo, () => setExtensionsInfo(null))
   }, [])
 
+  // User-level subagents for the Subagents section.
+  useEffect(() => {
+    window.pi.listSubagents().then(setSubagents, () => setSubagents(null))
+  }, [])
+
   // Configured packages for the Extensions section (pi package manager).
   useEffect(() => {
     window.pi.getPackages().then(setPackagesInfo, () => setPackagesInfo(null))
@@ -186,7 +235,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     const section = sheetRef.current?.querySelector<HTMLElement>('[data-sett-approval]')
     if (!section) return
     pendingSectionRef.current = null
-    if (typeof section.scrollIntoView === 'function') section.scrollIntoView({ block: 'nearest' })
+    setActiveNav('approval')
     section.querySelector<HTMLElement>('[data-sett-approval-toggle]')?.focus()
   }, [phase])
 
@@ -222,6 +271,24 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const refreshEngineStatus = async (): Promise<void> => {
     const status = await window.pi.getEngineStatus()
     setEngineStatus(status)
+  }
+
+  /** Switches the visible partition; the rail owns focus via arrow keys. */
+  const goToSection = (id: NavId): void => {
+    setActiveNav(id)
+  }
+
+  /** Roving focus on the nav rail: ArrowUp/Down cycle, Home/End jump. */
+  const onNavKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
+    e.preventDefault()
+    let next: number
+    if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = NAV_ITEMS.length - 1
+    else next = e.key === 'ArrowDown' ? Math.min(index + 1, NAV_ITEMS.length - 1) : Math.max(index - 1, 0)
+    const item = NAV_ITEMS[next]!
+    setActiveNav(item.id)
+    navRef.current?.querySelectorAll<HTMLButtonElement>('.sett-nav-item')[next]?.focus()
   }
 
   const fetchRegistryVersions = async (): Promise<void> => {
@@ -380,6 +447,80 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     }
   }
 
+  const openNewSubagent = (): void => {
+    setSubagentEditor({ open: true, editingName: null, name: '', description: '', model: '', tools: [], systemPrompt: '' })
+  }
+
+  const openEditSubagent = (agent: SubagentConfig): void => {
+    setSubagentEditor({
+      open: true,
+      editingName: agent.name,
+      name: agent.name,
+      description: agent.description,
+      model: agent.model ?? '',
+      tools: agent.tools ?? [],
+      systemPrompt: agent.systemPrompt,
+    })
+  }
+
+  const toggleSubagentTool = (tool: string): void => {
+    setSubagentEditor((prev) => ({
+      ...prev,
+      tools: prev.tools.includes(tool) ? prev.tools.filter((t) => t !== tool) : [...prev.tools, tool],
+    }))
+  }
+
+  const closeSubagentEditor = (): void => {
+    setSubagentEditor((prev) => ({ ...prev, open: false }))
+  }
+
+  const saveSubagent = async (): Promise<void> => {
+    if (anyBusy) return
+    const name = subagentEditor.name.trim()
+    const description = subagentEditor.description.trim()
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)) {
+      setLive({ kind: 'error', text: t('settings.subagentNameRequired') })
+      return
+    }
+    if (description === '') {
+      setLive({ kind: 'error', text: t('settings.subagentDescRequired') })
+      return
+    }
+    setBusy('save')
+    try {
+      const edit: SubagentEdit = {
+        name,
+        description,
+        systemPrompt: subagentEditor.systemPrompt,
+        ...(subagentEditor.model.trim() !== '' ? { model: subagentEditor.model.trim() } : {}),
+        ...(subagentEditor.tools.length > 0 ? { tools: subagentEditor.tools } : {}),
+      }
+      const list = await window.pi.saveSubagent(name, edit)
+      setSubagents(list)
+      setLive({ kind: 'success', text: t('settings.saved') })
+      closeSubagentEditor()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const deleteSubagent = async (name: string): Promise<void> => {
+    if (anyBusy) return
+    if (!window.confirm(t('settings.subagentDeleteConfirm', { name }))) return
+    setBusy('delete')
+    try {
+      const list = await window.pi.deleteSubagent(name)
+      setSubagents(list)
+      setLive({ kind: 'success', text: t('settings.packageRemovedOk', { source: name }) })
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const refresh = async (): Promise<void> => {
     if (anyBusy) return
     setBusy('refresh')
@@ -420,10 +561,27 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setLive({ kind: 'error', text: t('settings.duplicateModel') })
       return
     }
-    // cc-switch style: Enter or the button turns the typed ID into a chip.
+    // cc-switch style: Enter or the button turns the typed ID into a card.
     setCustomModels((prev) => [...prev, { id }])
     setModelInput('')
     setLive(null)
+  }
+
+  /** Merges a partial patch into one model draft (id is the stable key). */
+  const updateModel = (id: string, patch: Partial<CustomModelDraft>): void => {
+    setCustomModels((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
+  }
+
+  /** Toggles image input for one model (text stays always on). */
+  const toggleModelImage = (id: string): void => {
+    setCustomModels((prev) =>
+      prev.map((m) => (m.id !== id ? m : { ...m, input: m.input?.includes('image') ? undefined : ['text', 'image'] })),
+    )
+  }
+
+  /** Batch action: every model accepts image input. */
+  const enableImageForAll = (): void => {
+    setCustomModels((prev) => prev.map((m) => ({ ...m, input: ['text', 'image'] })))
   }
 
   /** Tests the typed base URL + API key against the provider's /models endpoint. */
@@ -436,7 +594,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     }
     setTestResult({ testing: true })
     try {
+      // Editing an existing provider without retyping its key: main falls
+      // back to the key stored in models.json (the form never shows it).
       const result = await window.pi.testProviderConnection({
+        ...(editingId !== null ? { providerId: editingId } : {}),
         baseUrl,
         api: customApi,
         ...(customApiKey.trim() !== '' ? { apiKey: customApiKey.trim() } : {}),
@@ -464,7 +625,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     setCustomApiKey('')
     setCustomModels([])
     setModelInput('')
-    setCustomImage(false)
     setCustomType('custom')
     setTestResult({ testing: false })
   }
@@ -492,7 +652,14 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setCustomName(config.name ?? '')
       setCustomBaseUrl(config.baseUrl)
       setCustomApi(config.api)
-      setCustomModels(config.models.map((m) => ({ id: m.id })))
+      setCustomModels(
+        config.models.map((m) => ({
+          id: m.id,
+          ...(m.name !== undefined && m.name !== '' ? { name: m.name } : {}),
+          ...(m.input !== undefined && m.input.length > 0 ? { input: m.input } : {}),
+          ...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {}),
+        })),
+      )
       setCustomOpen(true)
     } catch (e) {
       setLive({ kind: 'error', text: errorMessage(e) })
@@ -547,6 +714,18 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setLive({ kind: 'error', text: t('settings.customUrlInvalid') })
       return
     }
+    // Per-model validation before the payload leaves the UI: the main-process
+    // whitelist rejects the whole config otherwise, with a generic failure.
+    for (const m of models) {
+      if (m.name !== undefined && m.name.length > 128) {
+        setLive({ kind: 'error', text: t('settings.modelNameTooLong') })
+        return
+      }
+      if (m.contextWindow !== undefined && (!Number.isInteger(m.contextWindow) || m.contextWindow < 1)) {
+        setLive({ kind: 'error', text: t('settings.modelContextInvalid') })
+        return
+      }
+    }
     setBusy('custom')
     setLive({ kind: 'info', text: t('settings.addingCustom') })
     const key = customApiKey.trim()
@@ -558,8 +737,14 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         api: customApi,
         ...(key !== '' ? { apiKey: key } : {}),
         models: models.map((m) => ({
-          ...m,
-          ...(customImage ? { input: ['text', 'image'] as const } : {}),
+          id: m.id,
+          ...(m.name !== undefined && m.name.trim() !== '' && m.name.trim() !== m.id
+            ? { name: m.name.trim() }
+            : {}),
+          ...(m.input?.includes('image') ? { input: ['text', 'image'] as const } : {}),
+          ...(m.contextWindow !== undefined && Number.isInteger(m.contextWindow) && m.contextWindow >= 1
+            ? { contextWindow: m.contextWindow }
+            : {}),
         })),
       })
       setSettings(s)
@@ -743,7 +928,22 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         <div className="sett-live" role="status" aria-live="polite">
           {live !== null ? <span className={`sett-live-text sett-live-${live.kind}`}>{live.text}</span> : null}
         </div>
-        <div className="sett-scroll">
+        <div className="sett-body">
+          <nav className="sett-nav" aria-label={t('settings.sections')} ref={navRef}>
+            {NAV_ITEMS.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`sett-nav-item${activeNav === item.id ? ' sett-nav-item-active' : ''}`}
+                aria-current={activeNav === item.id ? 'true' : undefined}
+                onClick={() => goToSection(item.id)}
+                onKeyDown={(e) => onNavKeyDown(e, index)}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </nav>
+          <div className="sett-scroll">
           {phase === 'loading' ? (
             <div className="sett-state">
               <LoaderCircle size={22} className="sett-spin" aria-hidden="true" />
@@ -761,7 +961,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
           ) : settings === null ? null : (
             <>
               {/* Appearance: language + theme (UI-local preferences). */}
-              <section className="sett-section" aria-labelledby="sett-appearance-title">
+              {activeNav === 'appearance' ? (
+              <section className="sett-section" aria-labelledby="sett-appearance-title" data-sett-nav-target="appearance">
                 <h3 id="sett-appearance-title">{t('settings.appearance')}</h3>
                 <p className="sett-hint">{t('settings.appearanceHint')}</p>
                 <div className="sett-field">
@@ -810,8 +1011,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </div>
                 </div>
               </section>
+              ) : null}
 
-              <section className="sett-section" aria-labelledby="sett-providers-title">
+              {activeNav === 'providers' ? (
+              <section className="sett-section" aria-labelledby="sett-providers-title" data-sett-nav-target="providers">
                 <div className="sett-section-head">
                   <h3 id="sett-providers-title">{t('settings.providers')}</h3>
                   <button
@@ -863,8 +1066,151 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </>
                 ) : null}
               </section>
+              ) : null}
 
-              <section className="sett-section" aria-labelledby="sett-extensions-title">
+              {activeNav === 'subagents' ? (
+              <section className="sett-section" aria-labelledby="sett-subagents-title" data-sett-nav-target="subagents">
+                <div className="sett-section-head">
+                  <h3 id="sett-subagents-title">{t('settings.subagents')}</h3>
+                  <button type="button" className="btn btn-primary" disabled={anyBusy} onClick={openNewSubagent}>
+                    <Plus size={13} aria-hidden="true" />
+                    {t('settings.subagentNew')}
+                  </button>
+                </div>
+                <p className="sett-hint">{t('settings.subagentsHint')}</p>
+                {subagentEditor.open ? (
+                  <div className="sett-custom sett-subagent-form">
+                    <div className="sett-custom-grid">
+                      <div className="sett-field">
+                        <label htmlFor="subagent-name">{t('settings.subagentName')}</label>
+                        <input
+                          id="subagent-name"
+                          className="sett-input"
+                          value={subagentEditor.name}
+                          disabled={anyBusy || subagentEditor.editingName !== null}
+                          onChange={(e) => setSubagentEditor((prev) => ({ ...prev, name: e.target.value }))}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="subagent-desc">{t('settings.subagentDescription')}</label>
+                        <input
+                          id="subagent-desc"
+                          className="sett-input"
+                          value={subagentEditor.description}
+                          disabled={anyBusy}
+                          onChange={(e) => setSubagentEditor((prev) => ({ ...prev, description: e.target.value }))}
+                        />
+                      </div>
+                      <div className="sett-field">
+                        <label htmlFor="subagent-model">{t('settings.subagentModel')}</label>
+                        <select
+                          id="subagent-model"
+                          className="sett-select"
+                          value={subagentEditor.model}
+                          disabled={anyBusy}
+                          onChange={(e) => setSubagentEditor((prev) => ({ ...prev, model: e.target.value }))}
+                        >
+                          <option value="">{t('settings.subagentModelDefault')}</option>
+                          {modelOptions.map((o) => (
+                            <option key={`${o.provider}:${o.id}`} value={o.id}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="sett-field">
+                        <label>{t('settings.subagentTools')}</label>
+                        <div className="sett-subagent-tool-opts" role="group" aria-label={t('settings.subagentTools')}>
+                          {SUBAGENT_TOOL_OPTIONS.map((tool) => (
+                            <button
+                              key={tool}
+                              type="button"
+                              className={`sett-subagent-tool-opt${subagentEditor.tools.includes(tool) ? ' sett-subagent-tool-opt-active' : ''}`}
+                              aria-pressed={subagentEditor.tools.includes(tool)}
+                              disabled={anyBusy}
+                              onClick={() => toggleSubagentTool(tool)}
+                            >
+                              {tool}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="sett-field-hint">{t('settings.subagentToolsHint')}</span>
+                      </div>
+                    </div>
+                    <div className="sett-field">
+                      <label htmlFor="subagent-prompt">{t('settings.subagentPrompt')}</label>
+                      <textarea
+                        id="subagent-prompt"
+                        className="sett-textarea"
+                        rows={8}
+                        value={subagentEditor.systemPrompt}
+                        disabled={anyBusy}
+                        onChange={(e) => setSubagentEditor((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+                      />
+                    </div>
+                    <div className="sett-custom-actions">
+                      <button type="button" className="btn btn-primary" disabled={anyBusy} onClick={() => void saveSubagent()}>
+                        {busy === 'save' ? t('settings.saving') : t('settings.subagentSave')}
+                      </button>
+                      <button type="button" className="btn" disabled={anyBusy} onClick={closeSubagentEditor}>
+                        {t('settings.subagentCancel')}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {subagents === null ? (
+                  <div className="sett-state sett-state-inline">
+                    <LoaderCircle size={16} className="sett-spin" aria-hidden="true" />
+                  </div>
+                ) : subagents.length === 0 ? (
+                  <p className="sett-hint">{t('settings.subagentNoAgents')}</p>
+                ) : (
+                  <div className="sett-provider-list">
+                    {subagents.map((agent) => (
+                      <div className="sett-provider-card" key={agent.name}>
+                        <div className="sett-provider-card-line">
+                          <span className="sett-provider-card-name" title={agent.filePath}>{agent.name}</span>
+                          <span className="sett-provider-card-actions">
+                            <button
+                              type="button"
+                              className="btn-icon sett-provider-edit"
+                              aria-label={t('settings.subagentEdit')}
+                              title={t('settings.subagentEdit')}
+                              disabled={anyBusy}
+                              onClick={() => openEditSubagent(agent)}
+                            >
+                              <Pencil size={11} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-icon"
+                              aria-label={t('settings.subagentDelete')}
+                              title={t('settings.subagentDelete')}
+                              disabled={anyBusy}
+                              onClick={() => void deleteSubagent(agent.name)}
+                            >
+                              <X size={11} aria-hidden="true" />
+                            </button>
+                          </span>
+                        </div>
+                        <div className="sett-provider-card-sub">
+                          <span className="sett-subagent-desc">{agent.description}</span>
+                          {agent.model !== undefined ? <code>{agent.model}</code> : null}
+                        </div>
+                        {agent.tools !== undefined && agent.tools.length > 0 ? (
+                          <div className="sett-subagent-tools">
+                            {agent.tools.map((tool) => (
+                              <span className="sett-subagent-tool" key={tool}>{tool}</span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+              ) : null}
+
+              {activeNav === 'extensions' ? (
+              <section className="sett-section" aria-labelledby="sett-extensions-title" data-sett-nav-target="extensions">
                 <div className="sett-section-head">
                   <h3 id="sett-extensions-title">{t('settings.extensions')}</h3>
                   <button
@@ -1005,8 +1351,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </>
                 )}
               </section>
+              ) : null}
 
-              <section className="sett-section" aria-labelledby="sett-engine-title">
+              {activeNav === 'engine' ? (
+              <section className="sett-section" aria-labelledby="sett-engine-title" data-sett-nav-target="engine">
                 <div className="sett-section-head">
                   <h3 id="sett-engine-title">{t('settings.engine')}</h3>
                 </div>
@@ -1135,8 +1483,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </>
                 )}
               </section>
+              ) : null}
 
-              <section className="sett-section" aria-labelledby="sett-defaults-title">
+              {activeNav === 'defaults' ? (
+              <section className="sett-section" aria-labelledby="sett-defaults-title" data-sett-nav-target="defaults">
                 <h3 id="sett-defaults-title">{t('settings.defaults')}</h3>
                 <p className="sett-hint">{t('settings.defaultsHint')}</p>
                 <div className="sett-field">
@@ -1254,10 +1604,13 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   {busy === 'save' ? t('settings.saving') : t('settings.saveDefaults')}
                 </button>
               </section>
+              ) : null}
 
+              {activeNav === 'approval' ? (
               <section
                 className={`sett-section sett-approval${approvalMode === 'managed' ? ' sett-approval-managed' : ''}`}
                 aria-labelledby="sett-approval-title"
+                data-sett-nav-target="approval"
                 data-sett-approval
               >
                 <h3 id="sett-approval-title">
@@ -1299,8 +1652,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   ) : null}
                 </div>
               </section>
+              ) : null}
             </>
           )}
+          </div>
         </div>
       </section>
 
@@ -1427,23 +1782,109 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                   </div>
                   <div className="sett-field">
                     <label>{t('settings.modelsList')}</label>
-                    <span className="sett-field-hint">{t('settings.modelsListHint')}</span>
+                    <div className="sett-model-toolbar">
+                      <span className="sett-field-hint">{t('settings.modelsListHint')}</span>
+                      <button
+                        type="button"
+                        className="sett-model-all-image"
+                        disabled={anyBusy || customModels.length === 0}
+                        onClick={enableImageForAll}
+                      >
+                        <ImageIcon size={11} aria-hidden="true" />
+                        {t('settings.imageAll')}
+                      </button>
+                    </div>
                     {customModels.length > 0 ? (
                       <div className="sett-model-list">
-                        {customModels.map((model) => (
-                          <div className="sett-model-row" key={model.id}>
-                            <span className="sett-model-id">{model.id}</span>
-                            <button
-                              type="button"
-                              className="btn-icon"
-                              aria-label={t('settings.removeModel')}
-                              title={t('settings.removeModel')}
-                              onClick={() => setCustomModels((prev) => prev.filter((m) => m.id !== model.id))}
-                            >
-                              <X size={11} aria-hidden="true" />
-                            </button>
-                          </div>
-                        ))}
+                        {customModels.map((model) => {
+                          const image = model.input?.includes('image') ?? false
+                          return (
+                            <div className="sett-model-card" key={model.id}>
+                              <div className="sett-model-card-head">
+                                <span className="sett-model-id" title={model.id}>
+                                  {model.id}
+                                </span>
+                                <span className="sett-model-card-actions">
+                                  <span className="sett-model-badges">
+                                    {model.contextWindow !== undefined && Number.isFinite(model.contextWindow) ? (
+                                      <span className="sett-model-badge">
+                                        {formatTokens(model.contextWindow)} tokens
+                                      </span>
+                                    ) : null}
+                                    {image ? (
+                                      <span className="sett-model-badge sett-model-badge-image">
+                                        <ImageIcon size={10} aria-hidden="true" />
+                                        {t('settings.modelInputImage')}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="btn-icon"
+                                    aria-label={t('settings.removeModel')}
+                                    title={t('settings.removeModel')}
+                                    disabled={anyBusy}
+                                    onClick={() => setCustomModels((prev) => prev.filter((m) => m.id !== model.id))}
+                                  >
+                                    <X size={11} aria-hidden="true" />
+                                  </button>
+                                </span>
+                              </div>
+                              <div className="sett-model-card-grid">
+                                <div className="sett-field">
+                                  <label htmlFor={`model-name-${model.id}`}>{t('settings.modelName')}</label>
+                                  <input
+                                    id={`model-name-${model.id}`}
+                                    className="sett-input"
+                                    placeholder={t('settings.modelNamePh')}
+                                    value={model.name ?? ''}
+                                    disabled={anyBusy}
+                                    onChange={(e) => updateModel(model.id, { name: e.target.value })}
+                                  />
+                                </div>
+                                <div className="sett-field">
+                                  <label htmlFor={`model-ctx-${model.id}`}>{t('settings.modelContext')}</label>
+                                  <div className="sett-model-ctx">
+                                    <input
+                                      id={`model-ctx-${model.id}`}
+                                      type="number"
+                                      min={1}
+                                      step={1}
+                                      className="sett-input"
+                                      placeholder={t('settings.modelContextPh')}
+                                      value={model.contextWindow ?? ''}
+                                      disabled={anyBusy}
+                                      onChange={(e) => {
+                                        const v = e.target.value
+                                        updateModel(model.id, { contextWindow: v === '' ? undefined : Number(v) })
+                                      }}
+                                    />
+                                    <span className="sett-model-ctx-unit">tokens</span>
+                                  </div>
+                                  {model.contextWindow !== undefined && Number.isInteger(model.contextWindow) && model.contextWindow >= 1 ? (
+                                    <span className="sett-field-hint">≈ {formatTokens(model.contextWindow)}</span>
+                                  ) : null}
+                                </div>
+                                <div className="sett-field">
+                                  <label>{t('settings.modelInputFormat')}</label>
+                                  <div className="sett-model-chips" role="group" aria-label={t('settings.modelInputFormat')}>
+                                    <span className="sett-model-chip sett-model-chip-on">{t('settings.modelInputText')}</span>
+                                    <button
+                                      type="button"
+                                      className={`sett-model-chip${image ? ' sett-model-chip-on' : ''}`}
+                                      aria-pressed={image}
+                                      disabled={anyBusy}
+                                      onClick={() => toggleModelImage(model.id)}
+                                    >
+                                      <ImageIcon size={10} aria-hidden="true" />
+                                      {t('settings.modelInputImage')}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     ) : null}
                     <div className="sett-model-add">
@@ -1468,15 +1909,6 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                     </div>
                   </div>
                 </div>
-                <label className="sett-toggle">
-                  <input
-                    type="checkbox"
-                    checked={customImage}
-                    disabled={anyBusy}
-                    onChange={(e) => setCustomImage(e.target.checked)}
-                  />
-                  {t('settings.customImage')}
-                </label>
               </>
             )}
             <div className="sett-custom-actions">
@@ -1500,6 +1932,9 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                 {t('common.cancel')}
               </button>
             </div>
+            {editingId !== null && customApiKey.trim() === '' ? (
+              <p className="sett-hint">{t('settings.testUsesSavedKey')}</p>
+            ) : null}
             {!testResult.testing && 'kind' in testResult ? (
               <div
                 className={`sett-test-result sett-test-${testResult.ok ? 'ok' : 'fail'}`}

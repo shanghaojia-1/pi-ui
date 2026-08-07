@@ -324,7 +324,7 @@ describe('IPC channel contract', () => {
   it('exposes every expected channel as a non-empty string', () => {
     const expected = [
       'snapshot', 'chooseWorkspace', 'openWorkspace', 'newSession', 'openSession',
-      'prompt', 'abort', 'model', 'thinking', 'settings', 'updateSettings',
+      'prompt', 'abort', 'cancelSubagent', 'model', 'thinking', 'settings', 'updateSettings',
       'runtimeApiKey', 'logoutProvider', 'refreshModels', 'setToolApprovalMode', 'changed',
     ] as const
     for (const key of expected) {

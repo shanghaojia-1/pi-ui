@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { seedConfiguredEngine } from './engine-fixture'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = resolve(HERE, '../..')
@@ -23,8 +24,10 @@ test.describe.serial('i18n + themes (isolated)', () => {
     writeFileSync(join(tempWorkspace, 'README.md'), '# i18n\n')
     const tempUserData = join(tempRoot, 'user-data')
     mkdirSync(tempUserData)
+    seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'en', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
+    delete env.ELECTRON_RUN_AS_NODE
     app = await _electron.launch({ args: [PROJECT_ROOT], cwd: tempWorkspace, env })
     page = await app.firstWindow()
     await page.waitForSelector('.app', { timeout: 60000 })
@@ -53,6 +56,10 @@ test.describe.serial('i18n + themes (isolated)', () => {
     // The whole dialog flips to Chinese without reopening.
     await expect(page.getByRole('button', { name: '新任务' })).toBeVisible()
     await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
+    // The dialog name flips to zh with the language; re-acquire it, then
+    // enter the providers partition behind the nav rail.
+    const dialogZh = page.getByRole('dialog', { name: '设置' })
+    await dialogZh.getByRole('button', { name: '模型提供商', exact: true }).click()
     await expect(page.getByRole('heading', { name: '模型提供商' })).toBeVisible()
     // Persisted for the next launch.
     const stored = await page.evaluate(() => localStorage.getItem('pi-studio-lang'))

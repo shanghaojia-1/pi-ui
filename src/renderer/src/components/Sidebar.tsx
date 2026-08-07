@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Folder, FolderOpen, MessageSquare, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, MessageSquare, Pencil, Plus, Search, Settings, Trash2, X } from 'lucide-react'
 import type { AppSnapshot, SessionGroup, SessionListItem } from '@shared/contracts'
 import { basename } from '../lib/path'
 import { formatTime } from '../lib/format'
@@ -38,6 +38,17 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const workspace = snapshot?.workspace ?? null
   /** Session paths awaiting the second (confirming) click; auto-resets on blur. */
   const [confirming, setConfirming] = useState<string | null>(null)
+  /** Auto-reset timer for the delete confirmation (2s) so it never sticks. */
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearConfirmTimer = (): void => {
+    if (confirmTimerRef.current !== null) {
+      clearTimeout(confirmTimerRef.current)
+      confirmTimerRef.current = null
+    }
+  }
+  useEffect(() => () => clearConfirmTimer(), [])
+  /** Session search query (matches title + preview, case-insensitive). */
+  const [searchQuery, setSearchQuery] = useState('')
   /** Group sections currently collapsed (persisted). */
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(loadCollapsed)
   /** Inline group-creation form state; null = closed. */
@@ -82,6 +93,17 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const groups = snapshot?.groups ?? []
   const ungrouped = buckets.get(UNGROUPED_KEY) ?? []
   const countOf = (id: string): number => buckets.get(id)?.length ?? 0
+
+  /** Flat search results across all groups, newest first; null = search off. */
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    if (query === '') return null
+    const q = query
+    return (snapshot?.sessions ?? [])
+      .filter((s) => s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q))
+      .sort((a, b) => +new Date(b.modifiedAt) - +new Date(a.modifiedAt))
+  }, [snapshot, searchQuery])
+  const searching = searchResults !== null
 
   const startCreate = (): void => {
     setCreating(true)
@@ -157,6 +179,11 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const renderSession = (item: SessionListItem): React.ReactNode => {
     const active = item.path === snapshot?.activeSessionPath
     const confirmDelete = confirming === item.path
+    const requestDelete = (): void => {
+      clearConfirmTimer()
+      setConfirming(item.path)
+      confirmTimerRef.current = setTimeout(() => setConfirming(null), 2000)
+    }
     return (
       <div
         key={item.id}
@@ -174,7 +201,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
         >
           <span className="session-title">
             <MessageSquare size={12} className="session-icon" aria-hidden="true" />
-            <span className="session-title-text">{item.title}</span>
+            <span className="session-title-text" title={item.title}>{item.title}</span>
             <span className="session-time">{formatTime(item.modifiedAt)}</span>
           </span>
           <span className="session-preview">{item.preview}</span>
@@ -194,14 +221,18 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
           onClick={(e) => {
             e.stopPropagation()
             if (confirmDelete) {
+              clearConfirmTimer()
               setConfirming(null)
               onDeleteSession(item.path)
             } else {
-              setConfirming(item.path)
+              requestDelete()
             }
           }}
           onBlur={() => {
-            if (confirming === item.path) setConfirming(null)
+            if (confirming === item.path) {
+              clearConfirmTimer()
+              setConfirming(null)
+            }
           }}
         >
           <Trash2 size={12} aria-hidden="true" />
@@ -332,13 +363,68 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
       </div>
 
       <div className="sidebar-sessions" aria-label={t('sidebar.sessionsLabel')}>
-        {groups.length === 0 && ungrouped.length === 0 && !creating ? (
-          <div className="sidebar-empty">
-            {workspace ? t('sidebar.noSessions') : t('sidebar.openDirHint')}
+        {workspace ? (
+          <div className="sidebar-search">
+            <Search size={12} className="sidebar-search-icon" aria-hidden="true" />
+            <input
+              type="text"
+              className="sidebar-search-input"
+              placeholder={t('sidebar.searchPh')}
+              aria-label={t('sidebar.searchAria')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery !== '' ? (
+              <button
+                type="button"
+                className="btn-icon sidebar-search-clear"
+                aria-label={t('sidebar.searchClear')}
+                title={t('sidebar.searchClear')}
+                onClick={() => setSearchQuery('')}
+              >
+                <X size={11} aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
         ) : null}
 
-        {groups.map(renderGroup)}
+        {searching ? (
+          searchResults.length === 0 ? (
+            <div className="sidebar-empty">
+              <p>{t('sidebar.searchNone')}</p>
+            </div>
+          ) : (
+            <>
+              <div className="sidebar-search-meta">
+                <span>{t('sidebar.searchResults', { n: searchResults.length })}</span>
+                <button type="button" className="btn btn-sm" onClick={() => setSearchQuery('')}>
+                  <X size={11} aria-hidden="true" />
+                  {t('sidebar.searchClear')}
+                </button>
+              </div>
+              <div className="sidebar-search-results">{searchResults.map(renderSession)}</div>
+            </>
+          )
+        ) : (
+          <>
+            {groups.length === 0 && ungrouped.length === 0 && !creating ? (
+              <div className="sidebar-empty">
+                {workspace ? (
+                  <>
+                    <MessageSquare size={22} className="sidebar-empty-icon" aria-hidden="true" />
+                    <p>{t('sidebar.noSessions')}</p>
+                    <button type="button" className="btn btn-primary" onClick={onNewSession} disabled={busy}>
+                      <Plus size={14} aria-hidden="true" />
+                      <span>{t('sidebar.startFirst')}</span>
+                    </button>
+                    <span className="sidebar-empty-hint">{t('sidebar.startFirstHint', { kbd: shortcut('⌘N', 'Ctrl+N') })}</span>
+                  </>
+                ) : (
+                  <p>{t('sidebar.openDirHint')}</p>
+                )}
+              </div>
+            ) : null}
+            {groups.map(renderGroup)}
 
         {/* Ungrouped sessions live flat OUTSIDE every group: no collapsible
             header — a plain drop zone under the groups (Codex-style). */}
@@ -412,6 +498,8 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
             <Plus size={12} aria-hidden="true" />
             <span>{t('sidebar.newGroup')}</span>
           </button>
+        )}
+          </>
         )}
       </div>
 
