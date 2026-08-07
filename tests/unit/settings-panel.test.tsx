@@ -27,6 +27,7 @@ const snapshot: AppSnapshot = {
   workspace: { path: '/tmp/ws', name: 'ws' },
   activeSessionPath: null,
   sessions: [],
+  groups: [],
   models: [
     { provider: 'anthropic', id: 'claude-sonnet', name: 'Claude Sonnet', contextWindow: 200_000 },
     { provider: 'anthropic', id: 'claude-haiku', name: 'Claude Haiku' },

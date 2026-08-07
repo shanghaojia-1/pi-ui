@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { delimiter } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
 import { activateEngineVersion, deactivateEngine, findNpm, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
@@ -129,6 +129,24 @@ ipcMain.handle(IPC.copyLastMessage, () => runtime.copyLastMessage())
 ipcMain.handle(IPC.exportSession, () => runtime.exportSession())
 ipcMain.handle(IPC.sessionStats, () => runtime.getSessionStats())
 ipcMain.handle(IPC.reloadSession, () => runtime.reloadSession())
+ipcMain.handle(IPC.pickDirectory, () => runtime.pickDirectory())
+ipcMain.handle(IPC.createSessionGroup, (_event, name: unknown, dirs: unknown) => {
+  if (!isSessionGroupName(name) || !isGroupDirs(dirs)) throw new Error('Invalid session group')
+  return runtime.createSessionGroup(name, dirs)
+})
+ipcMain.handle(IPC.renameSessionGroup, (_event, id: unknown, name: unknown) => {
+  if (!isSessionGroupName(id) || !isSessionGroupName(name)) throw new Error('Invalid session group')
+  return runtime.renameSessionGroup(id, name)
+})
+ipcMain.handle(IPC.deleteSessionGroup, (_event, id: unknown) => {
+  if (!isSessionGroupName(id)) throw new Error('Invalid session group')
+  return runtime.deleteSessionGroup(id)
+})
+ipcMain.handle(IPC.moveSessionToGroup, (_event, sessionPath: unknown, groupId: unknown) => {
+  if (typeof sessionPath !== 'string' || sessionPath.length < 1 || sessionPath.length > 4096) throw new Error('Invalid session path')
+  if (groupId !== null && (!isSessionGroupName(groupId))) throw new Error('Invalid session group')
+  return runtime.moveSessionToGroup(sessionPath, groupId as string | null)
+})
 ipcMain.handle(IPC.quitApp, () => { app.quit() })
 ipcMain.handle(IPC.appInfo, (): AppInfo => ({
   name: 'Pi Studio',

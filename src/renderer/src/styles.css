@@ -743,11 +743,264 @@ li[aria-selected='true'] > .select-item {
   font-size: 12px;
   color: var(--text-3);
 }
-.session-group-label {
-  padding: 6px 8px 4px;
-  font-size: 10.5px;
-  letter-spacing: 0.07em;
+/* ---------- session groups ---------- */
+.session-group {
+  border-radius: var(--radius);
+  transition: background 0.1s;
+}
+.session-group-dragover {
+  background: var(--accent-soft);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+/* Codex-style group header: a compact card row with chevron + icon + name. */
+.session-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 1px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.session-group-head:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.session-group-chevron {
+  flex: none;
   color: var(--text-3);
+  transition: transform 0.12s;
+}
+.session-group-icon {
+  flex: none;
+  color: var(--accent);
+}
+.session-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-group-count {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-3);
+  background: var(--bg-subtle);
+  border-radius: 9px;
+  padding: 0 6px;
+  line-height: 15px;
+}
+.session-group-actions {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+}
+.session-group-head:hover .session-group-actions {
+  display: inline-flex;
+}
+.session-group-btn {
+  width: 20px;
+  height: 20px;
+  color: var(--text-3);
+}
+.session-group-btn:hover {
+  color: var(--text);
+}
+.session-group-btn-del:hover {
+  color: var(--red);
+  background: var(--red-soft);
+}
+.session-group-rename {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 1px 4px;
+}
+.session-group-items {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 4px;
+}
+/* Ungrouped sessions: flat list below the groups — no header, no collapse.
+   The whole strip is a drop target that pins sessions OUT of every group. */
+.session-ungrouped {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 6px;
+  min-height: 28px;
+  border-radius: var(--radius);
+  transition: background 0.1s;
+}
+.session-group-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.session-group-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.session-group-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.session-ungrouped-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.session-ungrouped-new:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+.session-ungrouped-new:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* ---------- group creation form ---------- */
+.group-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+.group-form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.group-form-name {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.group-form-name:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+.group-form-close {
+  width: 22px;
+  height: 22px;
+}
+.group-form-dirs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.group-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.group-dir-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+}
+.group-dir-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.group-dir-remove:hover {
+  background: var(--red-soft);
+  color: var(--red);
+}
+.group-dir-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+.group-dir-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.group-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.group-form-error {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--red);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-sm {
+  padding: 3px 10px;
+  font-size: 11.5px;
+}
+.session-item-dragging {
+  opacity: 0.4;
 }
 .session-item {
   position: relative;

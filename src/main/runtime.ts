@@ -15,9 +15,12 @@ import type {
 import { getEngineApi } from './engine-loader'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
-  ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
+  ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionGroup, SessionGroupsConfig, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
+import { canonicalizeEvenIfMissing } from './paths'
+import { groupIdOf, loadSessionGroups, memberKey, newGroupId, saveSessionGroups } from './session-groups'
+import { UNGROUPED } from '../shared/contracts'
 import { CUSTOM_PROVIDER_APIS, isPlainObject, sanitizeErrorText } from '../shared/contracts'
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
@@ -193,24 +196,8 @@ type LiveToolQueue = {
   nextStart: number
 }
 
-/**
- * Canonicalizes `path` even when trailing segments do not exist yet: the nearest
- * existing ancestor is realpath'd and the missing suffix is re-appended. Throws
- * only if no ancestor at all can be resolved.
- */
-export const canonicalizeEvenIfMissing = (path: string): string => {
-  let current = resolve(path)
-  const missing: string[] = []
-  for (;;) {
-    try { return missing.length === 0 ? realpathSync(current) : resolve(realpathSync(current), ...missing) }
-    catch {
-      const parent = dirname(current)
-      if (parent === current) throw new Error(`Cannot canonicalize path: ${path}`)
-      missing.unshift(basename(current))
-      current = parent
-    }
-  }
-}
+/** Re-exported for test compatibility; implementation lives in ./paths. */
+export { canonicalizeEvenIfMissing } from './paths'
 
 export class PiRuntime {
   constructor(private readonly options: { cleanupTimeoutMs?: number } = {}) {}
@@ -231,6 +218,8 @@ export class PiRuntime {
   private packageManager: DefaultPackageManager | null = null
   private models: ModelInfo[] = []
   private sessions: SessionListItem[] = []
+  /** User-defined sidebar groups + explicit session memberships. */
+  private sessionGroups: SessionGroupsConfig = { version: 1, groups: [], members: {} }
   private runState: RunState = 'idle'
   private statusText = 'Ready'
   private lastError: AppSnapshot['error'] = null
@@ -378,6 +367,7 @@ export class PiRuntime {
 
   async initialize(cwd = process.cwd()): Promise<AppSnapshot> {
     try {
+      this.sessionGroups = loadSessionGroups(getEngineApi().getAgentDir())
       this.modelRuntime ??= await getEngineApi().ModelRuntime.create()
       await this.setWorkspace(cwd)
       // A skipped-session restore error is recoverable and stays in the snapshot.
@@ -409,6 +399,77 @@ export class PiRuntime {
     return this.enqueue(async () => {
       try { await this.setWorkspace(path) }
       catch (error) { this.recordError('Failed to open workspace', error) }
+    }).then(() => this.snapshot())
+  }
+
+  /** Native folder picker for group creation; null when cancelled. */
+  async pickDirectory(): Promise<string | null> {
+    try {
+      const win = this.dialogWindow()
+      const options: OpenDialogOptions = { title: 'Select a folder', properties: ['openDirectory', 'createDirectory'] }
+      const result = win
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
+      if (result.canceled || !result.filePaths[0]) return null
+      return canonicalizeEvenIfMissing(result.filePaths[0])
+    } catch { return null }
+  }
+
+  createSessionGroup(name: string, dirs: string[]): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const canonical = dirs.map((dir) => canonicalizeEvenIfMissing(dir))
+        this.sessionGroups = {
+          ...this.sessionGroups,
+          groups: [...this.sessionGroups.groups, { id: newGroupId(), name: name.trim(), dirs: canonical }],
+        }
+        saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to create session group', error) }
+    }).then(() => this.snapshot())
+  }
+
+  renameSessionGroup(id: string, name: string): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        this.sessionGroups = {
+          ...this.sessionGroups,
+          groups: this.sessionGroups.groups.map((g) => (g.id === id ? { ...g, name: name.trim() } : g)),
+        }
+        saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to rename session group', error) }
+    }).then(() => this.snapshot())
+  }
+
+  deleteSessionGroup(id: string): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const members = { ...this.sessionGroups.members }
+        for (const [path, groupId] of Object.entries(members)) {
+          if (groupId === id) delete members[path]
+        }
+        this.sessionGroups = { version: 1, groups: this.sessionGroups.groups.filter((g) => g.id !== id), members }
+        saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to delete session group', error) }
+    }).then(() => this.snapshot())
+  }
+
+  /** Drag pinning: groupId null pins the session OUT of every group (ungrouped). */
+  moveSessionToGroup(sessionPath: string, groupId: string | null): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        const canonical = this.verifySessionPath(sessionPath)
+        if (groupId !== null && !this.sessionGroups.groups.some((g) => g.id === groupId)) {
+          throw new Error('Unknown session group')
+        }
+        const members = { ...this.sessionGroups.members }
+        members[memberKey(canonical)] = groupId === null ? UNGROUPED : groupId
+        this.sessionGroups = { ...this.sessionGroups, members }
+        saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to move session', error) }
     }).then(() => this.snapshot())
   }
 
@@ -2483,15 +2544,20 @@ export class PiRuntime {
     // its own workspace for display and cross-workspace switching.
     const sessions = await getEngineApi().SessionManager.listAll()
     if (myEpoch !== this.epoch) return // a workspace switch happened while listing
-    this.sessions = sessions.map((item) => ({
-      id: item.id,
-      path: item.path,
-      title: (this.sessionNameOverrides.get(canonicalizeEvenIfMissing(item.path)) ?? item.name) || item.firstMessage || 'New session',
-      preview: item.firstMessage || 'No messages yet',
-      modifiedAt: item.modified.toISOString(),
-      messageCount: item.messageCount,
-      workspace: this.workspaceOf(item),
-    }))
+    const groups = this.sessionGroups
+    this.sessions = sessions.map((item) => {
+      const workspace = this.workspaceOf(item)
+      return {
+        id: item.id,
+        path: item.path,
+        title: (this.sessionNameOverrides.get(canonicalizeEvenIfMissing(item.path)) ?? item.name) || item.firstMessage || 'New session',
+        preview: item.firstMessage || 'No messages yet',
+        modifiedAt: item.modified.toISOString(),
+        messageCount: item.messageCount,
+        workspace,
+        groupId: groupIdOf(groups, item.path, workspace?.path ?? null),
+      }
+    })
     this.emit()
   }
 
@@ -2513,6 +2579,7 @@ export class PiRuntime {
       id: this.session.sessionId, path: activePath, title: this.sessionNameOverrides.get(canonicalizeEvenIfMissing(activePath)) ?? 'New session',
       preview: 'No messages yet', modifiedAt: new Date().toISOString(), messageCount: 0,
       workspace: workspace ? { path: workspace.path, name: workspace.name } : null,
+      groupId: groupIdOf(this.sessionGroups, activePath, workspace?.path ?? null),
     }, ...sessions]
   }
 
@@ -2521,7 +2588,7 @@ export class PiRuntime {
     const activeSessionPath = this.activePath()
     return {
       workspace: this.workspace, activeSessionPath,
-      sessions: this.withActiveSession(this.sessions, activeSessionPath), models: this.models,
+      sessions: this.withActiveSession(this.sessions, activeSessionPath), groups: this.sessionGroups.groups, models: this.models,
       activeModel: model ? `${model.provider}:${model.id}` : null,
       thinkingLevel: (this.session?.thinkingLevel ?? 'medium') as ThinkingLevel,
       toolApprovalMode: this.getToolApprovalMode(),
