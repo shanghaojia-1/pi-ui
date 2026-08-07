@@ -5,8 +5,6 @@
   "type": "module",
   "description": "A focused desktop GUI for Pi coding agent",
   "license": "MIT",
-  "author": "Earendil Works",
-  "homepage": "https://github.com/earendil-works/pi-studio",
   "keywords": [
     "electron",
     "pi",
@@ -106,7 +104,7 @@
     },
     "linux": {
       "category": "Development",
-      "maintainer": "Earendil Works",
+      "maintainer": "ligang <ligang_ahyf@smec-cn.com>",
       "executableName": "pi-studio",
       "synopsis": "A focused desktop GUI for Pi coding agent",
       "syncDesktopName": true,
