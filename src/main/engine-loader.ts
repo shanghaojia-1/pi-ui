@@ -10,7 +10,8 @@
  * the app can never fail to start because of a bad external engine.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { delimiter } from 'node:path'
 import { execFile, spawnSync } from 'node:child_process'
 import { get } from 'node:https'
 import { pathToFileURL } from 'node:url'
@@ -185,7 +186,7 @@ export function getEngineStatus(): EngineStatus {
   let npm: { available: boolean; path: string | null } = { available: false, path: null }
   try {
     const found = findNpm()
-    npm = found === null ? { available: false, path: null } : { available: true, path: found }
+    npm = found === null ? { available: false, path: null } : { available: true, path: found.command }
   } catch { /* npm probing is best-effort */ }
   return {
     active,
@@ -244,20 +245,38 @@ export async function listRegistryVersions(): Promise<string[]> {
  * locations (Finder-launched apps inherit a minimal PATH on macOS). On
  * Windows npm is a .cmd shim and must run through the shell.
  */
-function findNpm(): string | null {
+interface ResolvedNpm {
+  command: string
+  /** PATH prefix (bin dir of the resolved npm) so its shebang can find node. */
+  env: NodeJS.ProcessEnv
+}
+
+/**
+ * Locates a usable npm CLI: PATH first, then the common nvm and Homebrew
+ * locations (Finder-launched apps inherit a minimal PATH on macOS). npm is a
+ * node script with a `#!/usr/bin/env node` shebang, so probing a candidate
+ * MUST add its own bin dir to PATH — otherwise the shebang cannot resolve
+ * `node` and the probe fails even though npm exists. On Windows npm is a
+ * .cmd shim and must run through the shell.
+ */
+function findNpm(): ResolvedNpm | null {
   const candidates: string[] = []
-  const probe = (command: string): boolean => {
+  const probe = (command: string, extraBinDir?: string): boolean => {
     try {
+      const env = extraBinDir
+        ? { ...process.env, PATH: `${extraBinDir}${delimiter}${process.env.PATH ?? ''}` }
+        : undefined
       const result = spawnSync(command, ['--version'], {
-        timeout: 5_000, encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true,
+        timeout: 5_000, encoding: 'utf8', shell: process.platform === 'win32', windowsHide: true, env,
       })
       return result.status === 0 && (result.stdout ?? '').trim().length > 0
     } catch {
       return false
     }
   }
+  const baseEnv = (binDir: string): NodeJS.ProcessEnv => ({ ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}` })
   const command = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-  if (probe(command)) return command
+  if (probe(command)) return { command, env: process.env }
   if (process.platform !== 'win32') {
     const home = process.env.HOME ?? ''
     const nvmRoots: string[] = []
@@ -268,7 +287,12 @@ function findNpm(): string | null {
     candidates.push(...nvmRoots, '/opt/homebrew/bin/npm', '/usr/local/bin/npm')
   }
   for (const candidate of candidates) {
-    if (existsSync(candidate) && probe(candidate)) return candidate
+    // Probe with the candidate's own bin dir on PATH so the npm shebang can
+    // resolve `node` even when the GUI inherited a minimal PATH (Finder
+    // launch on macOS).
+    if (existsSync(candidate) && probe(candidate, dirname(candidate))) {
+      return { command: candidate, env: baseEnv(dirname(candidate)) }
+    }
   }
   return null
 }
@@ -287,12 +311,13 @@ export async function installEngineVersion(version: string): Promise<void> {
   if (existsSync(prefix)) rmSync(prefix, { recursive: true, force: true })
   await new Promise<void>((resolve, reject) => {
     execFile(
-      npm,
+      npm.command,
       ['install', '--prefix', prefix, '--no-audit', '--no-fund', '--loglevel=error', `${ENGINE_PACKAGE}@${version}`],
       // npm.cmd on Windows is a batch shim: it must run through the shell.
       // The version is regex-validated and the prefix is an internal path, so
-      // no attacker-controlled input reaches the command line.
-      { timeout: ENGINE_NPM_TIMEOUT_MS, windowsHide: true, shell: process.platform === 'win32' },
+      // no attacker-controlled input reaches the command line. The resolved
+      // env keeps node resolvable for the npm shebang (minimal GUI PATH).
+      { timeout: ENGINE_NPM_TIMEOUT_MS, windowsHide: true, shell: process.platform === 'win32', env: npm.env },
       (error) => {
         if (error) {
           try { rmSync(prefix, { recursive: true, force: true }) } catch { /* best-effort cleanup */ }

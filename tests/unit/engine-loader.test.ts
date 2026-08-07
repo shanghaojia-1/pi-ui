@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -39,6 +39,37 @@ const TMP_ROOT = mkdtempSync(join(realpathSync(tmpdir()), 'engine-loader-test-')
 afterEach(() => {
   rmSync(TMP_ROOT, { recursive: true, force: true })
   mkdirSync(TMP_ROOT, { recursive: true })
+})
+
+describe('engine-loader npm discovery', () => {
+  it('finds nvm npm even when the GUI inherited a minimal PATH (Finder launch)', async () => {
+    // Simulate a Finder-launched GUI: minimal PATH, no node/npm anywhere on it,
+    // npm living only under a fake ~/.nvm with a `#!/usr/bin/env node` shebang.
+    const home = join(TMP_ROOT, 'finder-home')
+    const bin = join(home, '.nvm', 'versions', 'node', 'v24.5.0', 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(join(bin, 'node'), '#!/bin/sh\necho v24.5.0\n')
+    writeFileSync(join(bin, 'npm'), '#!/usr/bin/env node\nconsole.log("9.0.0")\n')
+    chmodSync(join(bin, 'node'), 0o755)
+    chmodSync(join(bin, 'npm'), 0o755)
+
+    const originalHome = process.env.HOME
+    const originalPath = process.env.PATH
+    try {
+      process.env.HOME = home
+      // Minimal PATH: /usr/bin /bin /usr/sbin /sbin (no node, no npm).
+      process.env.PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
+      const loader = await freshLoader(join(TMP_ROOT, 'finder-userdata'))
+      const status = loader.getEngineStatus()
+      expect(status.npm.available).toBe(true)
+      expect(status.npm.path).toBe(join(bin, 'npm'))
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME
+      else process.env.HOME = originalHome
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+    }
+  })
 })
 
 describe('engine-loader builtin path', () => {
