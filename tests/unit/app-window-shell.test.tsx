@@ -13,6 +13,7 @@ const FAKE_SNAPSHOT: AppSnapshot = {
   workspace: { path: '/tmp/workspace', name: 'workspace' },
   activeSessionPath: '/tmp/workspace/session.jsonl',
   sessions: [],
+  groups: [],
   models: [],
   activeModel: null,
   thinkingLevel: 'off',

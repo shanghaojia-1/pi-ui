@@ -9,10 +9,10 @@ const PROJECT_ROOT = resolve(HERE, '../..')
 const SCREENSHOTS = join(PROJECT_ROOT, 'artifacts', 'screenshots')
 
 const API_METHODS = [
-  'abort', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deleteSession',
-  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getExtensions', 'getProviderConfig', 'getProviderTypes', 'getSessionStats', 'getSettings',
-  'getSnapshot', 'logoutProvider', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
-  'refreshModels', 'reloadSession', 'renameSession', 'saveProviderKey', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
+  'abort', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'createSessionGroup', 'deleteSession',
+  'deleteSessionGroup', 'exportSession', 'getAppInfo', 'getDynamicCommands', 'getExtensions', 'getProviderConfig', 'getProviderTypes', 'getSessionStats', 'getSettings',
+  'getSnapshot', 'logoutProvider', 'moveSessionToGroup', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
+  'pickDirectory', 'refreshModels', 'reloadSession', 'renameSession', 'renameSessionGroup', 'saveProviderKey', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
   'setThinking', 'setToolApprovalMode', 'testProviderConnection', 'updateSettings', 'quitApp',
 ].sort()
 

@@ -8,6 +8,7 @@ const base: AppSnapshot = {
   workspace: { path: '/tmp/ws', name: 'ws' },
   activeSessionPath: null,
   sessions: [],
+  groups: [],
   models: [],
   activeModel: null,
   thinkingLevel: 'off',
