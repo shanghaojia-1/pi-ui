@@ -290,6 +290,28 @@ export interface AppSnapshot {
   error: AppError | null
 }
 
+/** Active pi engine: version, source and where it was loaded from. */
+export interface ActiveEngineInfo {
+  version: string
+  source: 'builtin' | 'userdata'
+  path: string
+}
+
+/** Engine-management state surfaced to the settings UI. */
+export interface EngineStatus {
+  active: ActiveEngineInfo | null
+  /** True when the active engine is inside the GUI's supported range. */
+  compatible: boolean
+  supportedRange: string
+  /** Installed external versions (directory names under <userData>/engine/). */
+  installed: string[]
+  npm: { available: boolean; path: string | null }
+  /** Directory external engines are installed into (for manual install hints). */
+  installDir: string
+  /** Fixed-text reason when the external engine failed and builtin is used. */
+  error: string | null
+}
+
 export interface PiDesktopApi {
   getSnapshot(): Promise<AppSnapshot>
   chooseWorkspace(): Promise<AppSnapshot>
@@ -323,6 +345,17 @@ export interface PiDesktopApi {
   logoutProvider(provider: string): Promise<SettingsSnapshot>
   addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot>
   refreshModels(): Promise<SettingsSnapshot>
+  getEngineStatus(): Promise<EngineStatus>
+  /** Compatible versions available on the npm registry, newest first. */
+  getEngineVersions(): Promise<string[]>
+  /** Installs a version under <userData>/engine/ (npm required); rejects on failure. */
+  installEngine(version: string): Promise<void>
+  /** Activates an installed version for the next launch; rejects on failure. */
+  activateEngine(version: string): Promise<void>
+  /** Removes an installed version (and its activation if active). */
+  uninstallEngine(version: string): Promise<void>
+  /** Clears any external activation (back to the builtin engine). */
+  deactivateEngine(): Promise<void>
   onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void
 }
 
@@ -335,6 +368,7 @@ export const IPC = {
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
   dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
+  engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',
   changed: 'pi:changed',
 } as const
 
@@ -344,6 +378,10 @@ export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 
 export function isToolApprovalMode(value: unknown): value is ToolApprovalMode {
   return value === 'ask' || value === 'managed'
+}
+
+export function isEngineVersion(value: unknown): value is string {
+  return typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -27,6 +27,18 @@ vi.mock('@earendil-works/pi-coding-agent', () => ({
   SessionManager: mocks.SessionManager,
 }))
 
+// The runtime now reaches the SDK through the engine loader; keep the mocked
+// SDK surface in play by serving it from the mocked loader.
+vi.mock('../../src/main/engine-loader', () => ({
+  getEngineApi: () => ({
+    createAgentSession: mocks.createAgentSession,
+    DefaultResourceLoader: mocks.DefaultResourceLoader,
+    getAgentDir: mocks.getAgentDir,
+    ModelRuntime: mocks.ModelRuntime,
+    SessionManager: mocks.SessionManager,
+  }),
+}))
+
 const TMP = realpathSync(tmpdir())
 
 /** Default session directory for a cwd, mirroring the SDK's `--<encoded>--` encoding. */

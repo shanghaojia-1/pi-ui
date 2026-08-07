@@ -3,6 +3,7 @@ import { LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } fr
 import type {
   AppSnapshot,
   CustomProviderApi,
+  EngineStatus,
   ExtensionsInfo,
   ProviderStatus,
   ProviderTypeInfo,
@@ -82,6 +83,12 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
+  /** Engine-management state (loaded engine + installed external versions). */
+  const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null)
+  /** Compatible versions fetched from the npm registry (null = not fetched). */
+  const [registryVersions, setRegistryVersions] = useState<string[] | null>(null)
+  const [engineInput, setEngineInput] = useState('')
+  const [engineBusy, setEngineBusy] = useState<null | 'install' | 'activate' | 'delete' | 'fetch' | 'deactivate'>(null)
   // Custom-provider form (adds a provider to the agent's models.json).
   const [customOpen, setCustomOpen] = useState(false)
   /** Provider id being edited (null = creating a new provider). */
@@ -152,6 +159,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     window.pi.getExtensions().then(setExtensionsInfo, () => setExtensionsInfo(null))
   }, [])
 
+  // Engine status for the Engine section (active engine + installed versions).
+  useEffect(() => {
+    window.pi.getEngineStatus().then(setEngineStatus, () => setEngineStatus(null))
+  }, [])
+
   // Provider type catalog (pi built-ins + custom) for the New-provider modal.
   useEffect(() => {
     window.pi.getProviderTypes().then(setProviderTypes, () => setProviderTypes([]))
@@ -194,6 +206,90 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     } else if (!e.shiftKey && document.activeElement === last) {
       e.preventDefault()
       first.focus()
+    }
+  }
+
+  const refreshEngineStatus = async (): Promise<void> => {
+    const status = await window.pi.getEngineStatus()
+    setEngineStatus(status)
+  }
+
+  const fetchRegistryVersions = async (): Promise<void> => {
+    if (engineBusy !== null) return
+    setEngineBusy('fetch')
+    try {
+      const versions = await window.pi.getEngineVersions()
+      setRegistryVersions(versions)
+    } catch {
+      setLive({ kind: 'error', text: t('settings.engine.listFailed') })
+    } finally {
+      setEngineBusy(null)
+    }
+  }
+
+  const installEngine = async (): Promise<void> => {
+    const version = engineInput.trim()
+    if (!/^\d+\.\d+\.\d+$/.test(version)) {
+      setLive({ kind: 'error', text: t('settings.engine.versionInvalid') })
+      return
+    }
+    if (engineBusy !== null) return
+    setEngineBusy('install')
+    try {
+      await window.pi.installEngine(version)
+      setLive({ kind: 'success', text: t('settings.engine.installedOk', { version }) })
+      setEngineInput('')
+      setRegistryVersions(null)
+      await refreshEngineStatus()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setEngineBusy(null)
+    }
+  }
+
+  const activateEngine = async (version: string): Promise<void> => {
+    if (engineBusy !== null) return
+    setEngineBusy('activate')
+    try {
+      await window.pi.activateEngine(version)
+      setLive({ kind: 'success', text: t('settings.engine.activateOk', { version }) })
+      await refreshEngineStatus()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setEngineBusy(null)
+    }
+  }
+
+  const deactivateEngine = async (): Promise<void> => {
+    if (engineBusy !== null) return
+    setEngineBusy('deactivate')
+    try {
+      await window.pi.deactivateEngine()
+      setLive({ kind: 'success', text: t('settings.engine.deactivated') })
+      await refreshEngineStatus()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setEngineBusy(null)
+    }
+  }
+
+  const deleteEngine = async (version: string): Promise<void> => {
+    if (engineBusy !== null) return
+    setEngineBusy('delete')
+    try {
+      await window.pi.uninstallEngine(version)
+      setLive({ kind: 'success', text: t('settings.engine.deleted', { version }) })
+      if (engineStatus?.active?.source === 'userdata' && engineStatus.active.version === version) {
+        setRegistryVersions(null)
+      }
+      await refreshEngineStatus()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setEngineBusy(null)
     }
   }
 
@@ -740,6 +836,136 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       </div>
                     ) : null}
                   </div>
+                )}
+              </section>
+
+              <section className="sett-section" aria-labelledby="sett-engine-title">
+                <div className="sett-section-head">
+                  <h3 id="sett-engine-title">{t('settings.engine')}</h3>
+                </div>
+                <p className="sett-hint">{t('settings.engineHint')}</p>
+                <p className="sett-hint">{t('settings.engine.supportedRange', { range: engineStatus?.supportedRange ?? '' })}</p>
+                {engineStatus === null ? (
+                  <div className="sett-state sett-state-inline">
+                    <LoaderCircle size={16} className="sett-spin" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="sett-engine-current">
+                      <span className="sett-engine-name">
+                        {t('settings.engine.current')}: {engineStatus.active?.version ?? '—'}
+                      </span>
+                      <span className="sett-extension-source">
+                        {engineStatus.active === null
+                          ? t('settings.engine.builtin')
+                          : t(`settings.engine.${engineStatus.active.source}`)}
+                      </span>
+                      {engineStatus.active !== null ? (
+                        <span className={engineStatus.compatible ? 'sett-engine-ok' : 'sett-engine-warn'}>
+                          {engineStatus.compatible
+                            ? t('settings.engine.compatible')
+                            : t('settings.engine.incompatible', { range: engineStatus.supportedRange })}
+                        </span>
+                      ) : null}
+                    </div>
+                    {engineStatus.error !== null ? (
+                      <div className="sett-extension-errors">
+                        <p>{t('settings.engine.loadError', { error: engineStatus.error })}</p>
+                      </div>
+                    ) : null}
+                    <p className="sett-hint">{t('settings.engine.installed')}</p>
+                    {engineStatus.installed.length === 0 ? (
+                      <p className="sett-hint">{t('settings.engine.noneInstalled')}</p>
+                    ) : (
+                      <div className="sett-extension-list">
+                        {engineStatus.installed.map((version) => {
+                          const isActive = engineStatus.active?.source === 'userdata' && engineStatus.active.version === version
+                          return (
+                            <div className="sett-extension" key={version}>
+                              <div className="sett-extension-main">
+                                <span className="sett-extension-name">{version}</span>
+                                <span className="sett-extension-source">
+                                  {isActive ? t('settings.engine.active') : ''}
+                                </span>
+                              </div>
+                              <div className="sett-extension-meta">
+                                {!isActive ? (
+                                  <button
+                                    type="button"
+                                    className="btn"
+                                    disabled={engineBusy !== null}
+                                    onClick={() => void activateEngine(version)}
+                                  >
+                                    {t('settings.engine.activate')}
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="btn btn-danger"
+                                  disabled={engineBusy !== null}
+                                  onClick={() => void deleteEngine(version)}
+                                >
+                                  {t('settings.engine.delete')}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <div className="sett-engine-install">
+                      <input
+                        type="text"
+                        className="input"
+                        value={engineInput}
+                        onChange={(e) => setEngineInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') void installEngine() }}
+                        placeholder={t('settings.engine.versionPh')}
+                        aria-label={t('settings.engine.versionPh')}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={engineBusy !== null}
+                        onClick={() => void installEngine()}
+                      >
+                        {engineBusy === 'install' ? t('settings.engine.installing') : t('settings.engine.install')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={engineBusy !== null}
+                        onClick={() => void fetchRegistryVersions()}
+                      >
+                        {engineBusy === 'fetch' ? t('settings.engine.fetchingVersions') : t('settings.engine.fetchVersions')}
+                      </button>
+                    </div>
+                    {registryVersions !== null && registryVersions.length > 0 ? (
+                      <div className="sett-engine-registry">
+                        {registryVersions.slice(0, 10).map((version) => (
+                          <button
+                            type="button"
+                            key={version}
+                            className="btn"
+                            disabled={engineBusy !== null}
+                            onClick={() => { setEngineInput(version); void installEngine() }}
+                          >
+                            {version}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {!engineStatus.npm.available ? (
+                      <div className="sett-extension-errors">
+                        <p>{t('settings.engine.manualInstall')}</p>
+                        <code className="sett-engine-cmd">
+                          npm install --prefix &quot;{engineStatus.installDir}/&lt;版本&gt;&quot; --no-audit --no-fund @earendil-works/pi-coding-agent@&lt;版本&gt;
+                        </code>
+                        <p className="sett-hint">{t('settings.engine.manualInstallDir', { dir: engineStatus.installDir })}</p>
+                      </div>
+                    ) : null}
+                    <p className="sett-hint">{t('settings.engine.restartHint')}</p>
+                  </>
                 )}
               </section>
 

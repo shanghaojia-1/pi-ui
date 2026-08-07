@@ -61,6 +61,20 @@ const api = {
   getProviderTypes: vi.fn().mockResolvedValue([]),
   saveProviderKey: vi.fn(),
   addCustomProvider: vi.fn(),
+  getEngineStatus: vi.fn().mockResolvedValue({
+    active: null,
+    compatible: true,
+    supportedRange: '>=0.83.0 <0.85.0',
+    installed: [],
+    npm: { available: true, path: '/usr/bin/npm' },
+    installDir: '/tmp/engine',
+    error: null,
+  }),
+  getEngineVersions: vi.fn().mockResolvedValue([]),
+  installEngine: vi.fn(),
+  activateEngine: vi.fn(),
+  uninstallEngine: vi.fn(),
+  deactivateEngine: vi.fn(),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>

@@ -2,18 +2,16 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { BrowserWindow, clipboard, dialog, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
-import {
-  createAgentSession,
-  DefaultResourceLoader,
-  getAgentDir,
+import type {
+  AgentSession,
+  AgentSessionEvent,
+  ExtensionError,
+  InlineExtension,
   ModelRuntime,
+  SessionInfo,
   SessionManager,
-  type AgentSession,
-  type AgentSessionEvent,
-  type ExtensionError,
-  type InlineExtension,
-  type SessionInfo,
 } from '@earendil-works/pi-coding-agent'
+import { getEngineApi } from './engine-loader'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
@@ -370,14 +368,14 @@ export class PiRuntime {
     const fullPath = canonicalizeEvenIfMissing(resolve(input))
     const info = await stat(fullPath).catch(() => null)
     if (!info?.isDirectory()) throw new Error('Workspace must be a directory')
-    const agentRoot = canonicalizeEvenIfMissing(getAgentDir())
+    const agentRoot = canonicalizeEvenIfMissing(getEngineApi().getAgentDir())
     if (this.isInside(fullPath, agentRoot)) throw new Error('Refusing to use the Pi config directory as a workspace')
     return fullPath
   }
 
   async initialize(cwd = process.cwd()): Promise<AppSnapshot> {
     try {
-      this.modelRuntime ??= await ModelRuntime.create()
+      this.modelRuntime ??= await getEngineApi().ModelRuntime.create()
       await this.setWorkspace(cwd)
       // A skipped-session restore error is recoverable and stays in the snapshot.
       if (!this.skippedRestore) {
@@ -421,7 +419,7 @@ export class PiRuntime {
     if (opts.restore === false) {
       // Caller (cross-workspace openSession) opens a specific session next;
       // restoring the most recent one first would churn the session twice.
-      await this.createSession(SessionManager.create(fullPath))
+      await this.createSession(getEngineApi().SessionManager.create(fullPath))
       return
     }
     // Restore the most recent persisted session OF THIS workspace through the
@@ -435,7 +433,7 @@ export class PiRuntime {
       await this.openVerifiedSession(first.path, true)
       return
     }
-    await this.createSession(SessionManager.create(fullPath))
+    await this.createSession(getEngineApi().SessionManager.create(fullPath))
   }
 
   /**
@@ -452,7 +450,7 @@ export class PiRuntime {
       const verified = this.verifySessionPath(path)
       const rechecked = this.verifySessionPath(path) // TOCTOU: re-verify immediately before opening
       if (rechecked !== verified) throw new Error('Session changed while opening')
-      const opened = await this.createSession(SessionManager.open(verified, undefined, workspace.path))
+      const opened = await this.createSession(getEngineApi().SessionManager.open(verified, undefined, workspace.path))
       // Fail closed: the opened session must report the exact verified file — a
       // non-empty sessionFile whose canonical realpath matches. undefined or
       // null means the SDK never bound the candidate to a real file: abandon it
@@ -465,7 +463,7 @@ export class PiRuntime {
     } catch (error) {
       if (!fallbackCreate) throw error
       this.skippedRestore = true
-      await this.createSession(SessionManager.create(workspace.path))
+      await this.createSession(getEngineApi().SessionManager.create(workspace.path))
       this.lastError = { message: 'Skipped unopenable session', detail: sanitizeErrorText(error, '', this.knownSecrets), recoverable: true }
       this.statusText = 'Skipped unopenable session'
       this.emit()
@@ -500,8 +498,8 @@ export class PiRuntime {
     await this.disposeSession()
     const myEpoch = this.epoch
     if (!this.workspace || !this.modelRuntime) return null
-    const loader = new DefaultResourceLoader({
-      cwd: this.workspace.path, agentDir: getAgentDir(), extensionFactories: [this.approvalExtension()],
+    const loader = new (getEngineApi().DefaultResourceLoader)({
+      cwd: this.workspace.path, agentDir: getEngineApi().getAgentDir(), extensionFactories: [this.approvalExtension()],
       // User extensions / skills / prompt templates are loaded (they power
       // the dynamic slash-command menu); themes stay disabled because the
       // GUI ships its own theme system.
@@ -509,7 +507,7 @@ export class PiRuntime {
     })
     await loader.reload()
     if (myEpoch !== this.epoch) return null
-    const result = await createAgentSession({
+    const result = await getEngineApi().createAgentSession({
       cwd: this.workspace.path, modelRuntime: this.modelRuntime, sessionManager: manager,
       resourceLoader: loader, tools: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
     })
@@ -643,7 +641,7 @@ export class PiRuntime {
     return this.enqueue(async () => {
       try {
         if (!this.workspace) throw new Error('Choose a workspace first')
-        await this.createSession(SessionManager.create(this.workspace.path))
+        await this.createSession(getEngineApi().SessionManager.create(this.workspace.path))
         await this.refreshSessions()
       } catch (error) { this.recordError('Failed to create session', error) }
     }).then(() => this.snapshot())
@@ -689,7 +687,7 @@ export class PiRuntime {
         this.sessionNameOverrides.delete(canonical)
         if (isActive) {
           await this.disposeSession()
-          await this.createSession(SessionManager.create(this.workspace.path))
+          await this.createSession(getEngineApi().SessionManager.create(this.workspace.path))
         }
         await this.refreshSessions()
       } catch (error) { this.recordError('Failed to delete session', error) }
@@ -712,7 +710,7 @@ export class PiRuntime {
     const canonical = canonicalizeEvenIfMissing(target)
     const allowed = this.sessions.some((item) => canonicalizeEvenIfMissing(resolve(item.path)) === canonical)
     if (!allowed) throw new Error('Session does not belong to this workspace')
-    const sessionsRoot = canonicalizeEvenIfMissing(join(getAgentDir(), 'sessions'))
+    const sessionsRoot = canonicalizeEvenIfMissing(join(getEngineApi().getAgentDir(), 'sessions'))
     if (!this.isInside(canonical, sessionsRoot)) throw new Error('Session does not belong to this workspace')
     return canonical
   }
@@ -986,7 +984,7 @@ export class PiRuntime {
    */
   getProviderConfig(providerId: string): Promise<ProviderEditConfig | null> {
     try {
-      const modelsPath = join(getAgentDir(), 'models.json')
+      const modelsPath = join(getEngineApi().getAgentDir(), 'models.json')
       const raw = readFileSync(modelsPath, 'utf8')
       const parsed: unknown = JSON.parse(raw)
       if (!isPlainObject(parsed)) return Promise.resolve(null)
@@ -1037,7 +1035,7 @@ export class PiRuntime {
     if (!runtime) return Promise.resolve([])
     const configured = new Set<string>()
     try {
-      const raw = readFileSync(join(getAgentDir(), 'models.json'), 'utf8')
+      const raw = readFileSync(join(getEngineApi().getAgentDir(), 'models.json'), 'utf8')
       const parsed: unknown = JSON.parse(raw)
       if (isPlainObject(parsed) && isPlainObject(parsed.providers)) {
         for (const id of Object.keys(parsed.providers)) configured.add(id)
@@ -1064,7 +1062,7 @@ export class PiRuntime {
     return this.enqueue(async () => {
       try {
         if (apiKey.trim() === '') throw new Error('API key is required')
-        const modelsPath = join(getAgentDir(), 'models.json')
+        const modelsPath = join(getEngineApi().getAgentDir(), 'models.json')
         let data: { providers?: Record<string, unknown> } = {}
         try {
           const raw = readFileSync(modelsPath, 'utf8')
@@ -1106,7 +1104,7 @@ export class PiRuntime {
   addCustomProvider(config: CustomProviderConfig): Promise<SettingsSnapshot> {
     return this.enqueue(async () => {
       try {
-        const modelsPath = join(getAgentDir(), 'models.json')
+        const modelsPath = join(getEngineApi().getAgentDir(), 'models.json')
         let data: { providers?: Record<string, unknown> } = {}
         try {
           const raw = readFileSync(modelsPath, 'utf8')
@@ -2383,7 +2381,7 @@ export class PiRuntime {
     // List sessions across EVERY workspace directory (~/.pi/agent/sessions/*)
     // so the sidebar is a unified cross-directory history; each entry carries
     // its own workspace for display and cross-workspace switching.
-    const sessions = await SessionManager.listAll()
+    const sessions = await getEngineApi().SessionManager.listAll()
     if (myEpoch !== this.epoch) return // a workspace switch happened while listing
     this.sessions = sessions.map((item) => ({
       id: item.id,

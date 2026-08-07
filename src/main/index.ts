@@ -1,11 +1,11 @@
 import { join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isImageAttachments, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isImageAttachments, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
+import { activateEngineVersion, deactivateEngine, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
 import { PiRuntime } from './runtime'
 import { windowOptionsForPlatform } from './window-options'
-import { getAgentDir } from '@earendil-works/pi-coding-agent'
 
 const runtime = new PiRuntime()
 let mainWindow: BrowserWindow | null = null
@@ -89,6 +89,9 @@ function textArg(value: unknown, name: string): string {
 }
 
 app.whenReady().then(async () => {
+  // Load the pi engine (external version if activated, builtin otherwise) BEFORE
+  // the runtime starts; every runtime call reads this cached engine API.
+  await loadEngineApi()
   mainWindow = createWindow()
   // Tool-approval policy: create and load the persisted store BEFORE the
   // runtime starts so the first tool_call already sees the persisted mode.
@@ -122,7 +125,7 @@ ipcMain.handle(IPC.appInfo, (): AppInfo => ({
   version: app.getVersion(),
   electron: process.versions.electron,
   platform: process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux' ? process.platform : 'other',
-  agentDir: getAgentDir(),
+  agentDir: getEngineApi().getAgentDir(),
 }))
 ipcMain.handle(IPC.dynamicCommands, () => runtime.getDynamicCommands())
 ipcMain.handle(IPC.extensions, () => runtime.getExtensions())
@@ -168,6 +171,21 @@ ipcMain.handle(IPC.logoutProvider, (event, provider: unknown) => {
   return runtime.logoutProvider(provider)
 })
 ipcMain.handle(IPC.refreshModels, () => runtime.refreshModels())
+ipcMain.handle(IPC.engineStatus, () => getEngineStatus())
+ipcMain.handle(IPC.engineVersions, () => listRegistryVersions())
+ipcMain.handle(IPC.engineInstall, (_event, version: unknown) => {
+  if (!isEngineVersion(version)) throw new Error('Invalid engine version')
+  return installEngineVersion(version)
+})
+ipcMain.handle(IPC.engineActivate, (_event, version: unknown) => {
+  if (!isEngineVersion(version)) throw new Error('Invalid engine version')
+  activateEngineVersion(version)
+})
+ipcMain.handle(IPC.engineUninstall, (_event, version: unknown) => {
+  if (!isEngineVersion(version)) throw new Error('Invalid engine version')
+  uninstallEngineVersion(version)
+})
+ipcMain.handle(IPC.engineDeactivate, () => { deactivateEngine() })
 ipcMain.handle(IPC.customProvider, (_event, config: unknown) => {
   if (!isCustomProviderConfig(config)) throw new Error('Invalid custom provider config')
   return runtime.addCustomProvider(config)

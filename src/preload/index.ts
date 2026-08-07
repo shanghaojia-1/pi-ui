@@ -62,6 +62,12 @@ const api: PiDesktopApi = {
   logoutProvider: (provider: string) => ipcRenderer.invoke(IPC.logoutProvider, provider),
   addCustomProvider: (config: CustomProviderConfig) => ipcRenderer.invoke(IPC.customProvider, config),
   refreshModels: () => ipcRenderer.invoke(IPC.refreshModels),
+  getEngineStatus: () => ipcRenderer.invoke(IPC.engineStatus),
+  getEngineVersions: () => ipcRenderer.invoke(IPC.engineVersions),
+  installEngine: (version: string) => ipcRenderer.invoke(IPC.engineInstall, version),
+  activateEngine: (version: string) => ipcRenderer.invoke(IPC.engineActivate, version),
+  uninstallEngine: (version: string) => ipcRenderer.invoke(IPC.engineUninstall, version),
+  deactivateEngine: () => ipcRenderer.invoke(IPC.engineDeactivate),
   onSnapshot: (listener: (snapshot: AppSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot): void => listener(snapshot)
     ipcRenderer.on(IPC.changed, handler)

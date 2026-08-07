@@ -74,6 +74,26 @@ vi.mock('@earendil-works/pi-coding-agent', () => ({
   SessionManager: mocks.SessionManager,
 }))
 
+// The main entry now loads the SDK through the engine loader; serve the same
+// mocked SDK surface (and stub the engine-management exports) so the IPC
+// boot path stays deterministic.
+vi.mock('../../src/main/engine-loader', () => ({
+  getEngineApi: () => ({
+    createAgentSession: mocks.createAgentSession,
+    DefaultResourceLoader: mocks.DefaultResourceLoader,
+    getAgentDir: mocks.getAgentDir,
+    ModelRuntime: mocks.ModelRuntime,
+    SessionManager: mocks.SessionManager,
+  }),
+  loadEngineApi: vi.fn(),
+  getEngineStatus: vi.fn(),
+  listRegistryVersions: vi.fn(),
+  installEngineVersion: vi.fn(),
+  activateEngineVersion: vi.fn(),
+  uninstallEngineVersion: vi.fn(),
+  deactivateEngine: vi.fn(),
+}))
+
 // Only the atomic rename is mocked (the managed-mode test suite's proven
 // failure point); everything else passes through to the real filesystem.
 vi.mock('node:fs/promises', async (importOriginal) => {
