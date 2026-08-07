@@ -37,9 +37,18 @@ function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: 
   // Thinking is shown EXPANDED by default so the model's reasoning is visible;
   // while streaming it stays open and keeps updating.
   const [open, setOpen] = useState(true)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const stickRef = useRef(true)
   useEffect(() => {
     if (streaming) setOpen(true)
   }, [streaming])
+  // The thinking body is its OWN scroll area (max-height + overflow in CSS).
+  // Stick it to the newest reasoning text while the user has not scrolled up
+  // inside it; expanding an overflowed body jumps straight to the latest text.
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight
+  }, [open, text])
   const idle = text.trim() === ''
   return (
     <div className={`thinking${open ? ' thinking-open' : ''}`}>
@@ -56,7 +65,14 @@ function ThinkingBlock({ text, streaming = false }: { text: string; streaming?: 
         <span className="thinking-count">{idle ? t('messages.thinkingInProgress') : t('messages.thinkingCount', { n: text.length })}</span>
       </button>
       {open && (
-        <div className="thinking-body">
+        <div
+          className="thinking-body"
+          ref={bodyRef}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          }}
+        >
           {idle ? (
             <span className="thinking-idle">{t('messages.thinkingIdle')}</span>
           ) : (
