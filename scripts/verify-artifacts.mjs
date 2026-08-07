@@ -45,12 +45,13 @@ import { closeSync, existsSync, openSync, readSync, readdirSync, readFileSync, s
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildVersion } from './build-version.mjs'
 
 const require = createRequire(import.meta.url)
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const releaseDir = join(root, 'release')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-const version = pkg.version
+const version = buildVersion()
 const minBytes = Number(process.env.VERIFY_MIN_MB ?? 30) * 1024 * 1024
 const isDarwin = process.platform === 'darwin'
 

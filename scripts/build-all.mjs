@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildVersion } from './build-version.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const cli = join(root, 'node_modules/electron-builder/cli.js')
@@ -21,10 +22,13 @@ if (!existsSync(cli)) {
 
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false'
 
+// Every artifact carries the current commit hash as a version suffix.
+const versionArg = `-c.extraMetadata.version=${buildVersion()}`
+
 const platforms = [
-  { name: 'mac', args: ['--mac', '--arm64'] },
-  { name: 'win', args: ['--win', '--x64'] },
-  { name: 'linux', args: ['--linux', '--x64'] },
+  { name: 'mac', args: ['--mac', '--arm64', versionArg] },
+  { name: 'win', args: ['--win', '--x64', versionArg] },
+  { name: 'linux', args: ['--linux', '--x64', versionArg] },
 ]
 
 const results = []

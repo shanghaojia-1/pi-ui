@@ -33,7 +33,7 @@ jobs:
       # 不签名（identity: null），zip 目标来自 package.json 的 mac.target。
       # --publish never 保证产物只保存为 Actions artifact。
       - name: Package macOS zips
-        run: npx electron-builder --mac zip --x64 --arm64 --publish never
+        run: npx electron-builder --mac zip --x64 --arm64 --publish never --config.extraMetadata.version=$(node scripts/build-version.mjs)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
@@ -61,7 +61,7 @@ jobs:
       # CLI 指定 zip 目标：electron-builder 按 package.json 的 artifactName 产出二进制文件。
       - name: Package Windows zip
         shell: bash
-        run: npx electron-builder --win zip --x64 --publish never
+        run: npx electron-builder --win zip --x64 --publish never --config.extraMetadata.version=$(node scripts/build-version.mjs)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
@@ -88,7 +88,7 @@ jobs:
 
       # AppImage 单文件可执行；目标只能在 Linux runner 上构建。
       - name: Package Linux AppImage
-        run: npx electron-builder --linux AppImage --x64 --publish never
+        run: npx electron-builder --linux AppImage --x64 --publish never --config.extraMetadata.version=$(node scripts/build-version.mjs)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
