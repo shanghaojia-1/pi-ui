@@ -260,7 +260,10 @@ export class DingtalkBridge {
   private async handleMessage(downstream: DWClientDownStream): Promise<void> {
     try {
       await this.routeMessage(downstream)
-    } catch { /* routing failures are silent; the ack already went out */ }
+    } catch (error) {
+      // The ack already went out; log so a silent no-reply stays diagnosable.
+      console.error('[dingtalk] message routing failed:', error instanceof Error ? error.message : error)
+    }
   }
 
   private async routeMessage(downstream: DWClientDownStream): Promise<void> {
@@ -268,30 +271,54 @@ export class DingtalkBridge {
     try {
       payload = JSON.parse(downstream.data)
     } catch {
+      console.error('[dingtalk] ignored: unparseable payload')
       return
     }
-    if (!isRecord(payload) || payload.msgtype !== 'text') return
+    if (!isRecord(payload)) {
+      console.error('[dingtalk] ignored: non-object payload')
+      return
+    }
+    const msgId = typeof payload.msgId === 'string' ? payload.msgId : '?'
+    if (payload.msgtype !== 'text') {
+      console.log(`[dingtalk] ignored msg ${msgId}: msgtype=${String(payload.msgtype)}`)
+      return
+    }
     const textPart = payload.text
     const content = isRecord(textPart) && typeof textPart.content === 'string' ? textPart.content.trim() : ''
-    if (content === '') return
+    if (content === '') {
+      console.log(`[dingtalk] ignored msg ${msgId}: empty text content`)
+      return
+    }
     const senderStaffId = typeof payload.senderStaffId === 'string' ? payload.senderStaffId : ''
     const senderNick = typeof payload.senderNick === 'string' && payload.senderNick !== '' ? payload.senderNick : '未知用户'
     const sessionWebhook = typeof payload.sessionWebhook === 'string' ? payload.sessionWebhook : ''
-    const conversationType = typeof payload.conversationType === 'string' ? payload.conversationType : 'group'
-    if (sessionWebhook === '' || senderStaffId === '') return
+    // DingTalk conversationType: '1' = single chat, '2' = group chat (also
+    // accept the human-readable aliases some gateways send).
+    const conversationType = typeof payload.conversationType === 'string' ? payload.conversationType : '2'
+    const isSingleChat = conversationType === '1' || conversationType === 'single'
+    const isInAtList = payload.isInAtList === true || payload.isInAtList === 'true'
+    if (sessionWebhook === '' || senderStaffId === '') {
+      console.log(`[dingtalk] ignored msg ${msgId}: missing sessionWebhook/senderStaffId`)
+      return
+    }
 
     this.lastMessageAt = Date.now()
     this.lastSender = senderNick
     this.notify()
 
-    // At-gate: single chat, or an explicit @-mention in a group.
-    if (conversationType !== 'single' && payload.isInAtList !== true) return
+    // At-gate: single chat needs no mention; group chat requires @-mention.
+    if (!isSingleChat && !isInAtList) {
+      console.log(`[dingtalk] ignored msg ${msgId}: group message without @mention (isInAtList=${String(payload.isInAtList)})`)
+      return
+    }
 
     const allowList = this.config.allowList
     if (allowList.length > 0 && !allowList.includes(senderStaffId)) {
+      console.log(`[dingtalk] denied msg ${msgId}: sender ${senderStaffId} not in allowlist`)
       await this.reply(sessionWebhook, senderStaffId, '⚠️ 你没有远程操控 Pi Agent 的权限（发送者不在允许列表）。')
       return
     }
+    console.log(`[dingtalk] handling msg ${msgId}: sender=${senderNick}(${senderStaffId}) type=${conversationType} text=${JSON.stringify(stripAtMention(content).slice(0, 80))}`)
 
     const text = stripAtMention(content)
     if (text === '') return
@@ -406,8 +433,11 @@ export class DingtalkBridge {
     try {
       const token = await client.getAccessToken()
       const accessToken = typeof token === 'string' && token !== '' ? token : ''
-      if (accessToken === '') return
-      await fetch(sessionWebhook, {
+      if (accessToken === '') {
+        console.error('[dingtalk] reply failed: empty access token')
+        return
+      }
+      const response = await fetch(sessionWebhook, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -419,6 +449,13 @@ export class DingtalkBridge {
           at: { atUserIds: [atUserId], isAtAll: false },
         }),
       })
-    } catch { /* a failed reply must never break the run loop */ }
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '')
+        console.error(`[dingtalk] reply HTTP ${response.status}: ${detail.slice(0, 300)}`)
+      }
+    } catch (error) {
+      // A failed reply must never break the run loop, but must stay diagnosable.
+      console.error('[dingtalk] reply failed:', error instanceof Error ? error.message : error)
+    }
   }
 }

@@ -284,6 +284,20 @@ describe('DingtalkBridge message routing', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('accepts single-chat messages without any @mention (DingTalk type "1")', async () => {
+    client.deliver('m1', botMessage({ conversationType: '1', isInAtList: undefined }))
+    await vi.advanceTimersByTimeAsync(100)
+    expect(runtime.prompt).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string).markdown.text).toContain('已收到任务')
+  })
+
+  it('accepts group @mentions with DingTalk type "2" and string "true" flag', async () => {
+    client.deliver('m1', botMessage({ conversationType: '2', isInAtList: 'true' }))
+    await vi.advanceTimersByTimeAsync(100)
+    expect(runtime.prompt).toHaveBeenCalledTimes(1)
+  })
+
   it('denies senders outside the allowlist with a fixed message', async () => {
     client.deliver('m1', botMessage({ senderStaffId: 'staff-2' }))
     await vi.advanceTimersByTimeAsync(100)
