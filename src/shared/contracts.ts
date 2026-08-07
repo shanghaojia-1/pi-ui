@@ -437,6 +437,51 @@ export interface ActiveEngineInfo {
   path: string
 }
 
+/** DingTalk robot bridge states surfaced to the settings UI. */
+export type DingtalkState =
+  | 'disabled'   // feature off: config.enabled is false
+  | 'stopped'    // configured but not connected
+  | 'connecting' // connecting / reconnecting
+  | 'connected'  // stream channel open
+  | 'error'      // credential/network failure; detail carries a fixed message
+
+/** Persisted DingTalk robot bridge configuration (<userData>/dingtalk.json). */
+export interface DingtalkConfig {
+  enabled: boolean
+  /** DingTalk open-platform app Client ID (AppKey). */
+  clientId: string
+  /** DingTalk open-platform app Client Secret (AppSecret). */
+  clientSecret: string
+  /** senderStaffId allowlist; empty = anyone who @s the bot can drive Pi. */
+  allowList: string[]
+}
+
+/** Live bridge status pushed to the renderer (and returned by IPC). */
+export interface DingtalkStatus {
+  state: DingtalkState
+  /** Fixed-text detail for error/connecting states; null when idle. */
+  detail: string | null
+  connectedAt: number | null
+  lastMessageAt: number | null
+  lastSender: string | null
+}
+
+const DINGTALK_ALLOWLIST_MAX = 32
+const DINGTALK_ALLOWLIST_ENTRY_MAX = 128
+
+export function isDingtalkConfig(value: unknown): value is DingtalkConfig {
+  if (!isPlainObject(value)) return false
+  const { enabled, clientId, clientSecret, allowList } = value as Record<string, unknown>
+  if (typeof enabled !== 'boolean') return false
+  if (typeof clientId !== 'string' || clientId.length > 128) return false
+  if (typeof clientSecret !== 'string' || clientSecret.length > 512) return false
+  if (!Array.isArray(allowList) || allowList.length > DINGTALK_ALLOWLIST_MAX) return false
+  for (const entry of allowList) {
+    if (typeof entry !== 'string' || entry.length < 1 || entry.length > DINGTALK_ALLOWLIST_ENTRY_MAX) return false
+  }
+  return true
+}
+
 /** Engine-management state surfaced to the settings UI. */
 export interface EngineStatus {
   active: ActiveEngineInfo | null
@@ -522,6 +567,16 @@ export interface PiDesktopApi {
   /** Deletes a subagent definition by name. */
   deleteSubagent(name: string): Promise<SubagentConfig[]>
   onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void
+  /** DingTalk remote-control bridge: persisted config (secrets included, local file only). */
+  getDingtalkConfig(): Promise<DingtalkConfig>
+  /** Persists the config; enabling it (or changing credentials) (re)starts the bridge. */
+  saveDingtalkConfig(config: DingtalkConfig): Promise<DingtalkStatus>
+  /** Connects the robot stream channel now (no config change). */
+  startDingtalk(): Promise<DingtalkStatus>
+  /** Disconnects the robot stream channel now (config kept). */
+  stopDingtalk(): Promise<DingtalkStatus>
+  getDingtalkStatus(): Promise<DingtalkStatus>
+  onDingtalkStatus(listener: (status: DingtalkStatus) => void): () => void
 }
 
 export const IPC = {
@@ -537,6 +592,9 @@ export const IPC = {
   engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',
   packages: 'pi:packages', packageInstall: 'pi:package-install', packageUpdate: 'pi:package-update', packageRemove: 'pi:package-remove', packageCheck: 'pi:package-check',
   subagents: 'pi:subagents', subagentSave: 'pi:subagent-save', subagentDelete: 'pi:subagent-delete',
+  dingtalkConfig: 'pi:dingtalk-config', dingtalkSaveConfig: 'pi:dingtalk-save-config',
+  dingtalkStart: 'pi:dingtalk-start', dingtalkStop: 'pi:dingtalk-stop', dingtalkStatus: 'pi:dingtalk-status',
+  dingtalkChanged: 'pi:dingtalk-changed',
   changed: 'pi:changed',
 } as const
 

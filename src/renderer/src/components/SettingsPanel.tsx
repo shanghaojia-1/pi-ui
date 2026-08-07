@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Image as ImageIcon, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Bot, Image as ImageIcon, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
   CustomProviderApi,
+  DingtalkConfig,
+  DingtalkStatus,
   EngineStatus,
   ExtensionsInfo,
   PackagesInfo,
@@ -17,7 +19,7 @@ import type {
 } from '@shared/contracts'
 import { CUSTOM_PROVIDER_APIS, HTTP_IDLE_TIMEOUT_MAX_MS, HTTP_IDLE_TIMEOUT_MIN_MS } from '../../../shared/contracts'
 import { errorMessage } from '../hooks'
-import { formatDuration, formatTokens } from '../lib/format'
+import { formatDuration, formatTime, formatTokens } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 import { THEMES, useTheme, type ThemeId } from '../lib/theme'
 
@@ -29,6 +31,15 @@ const AUTH_KEYS: Record<ProviderStatus['authStatus'], string> = {
   'models-json': 'settings.auth.modelsJson',
   none: 'settings.auth.none',
   error: 'settings.auth.error',
+}
+
+/** DingTalk bridge states surfaced as translated labels in the status card. */
+const DINGTALK_STATE_KEYS: Record<DingtalkStatus['state'], string> = {
+  disabled: 'settings.dingtalk.state.disabled',
+  stopped: 'settings.dingtalk.state.stopped',
+  connecting: 'settings.dingtalk.state.connecting',
+  connected: 'settings.dingtalk.state.connected',
+  error: 'settings.dingtalk.state.error',
 }
 
 /** Tool presets offered as click-to-toggle chips in the subagent editor. */
@@ -66,6 +77,7 @@ const NAV_ITEMS = [
   { id: 'extensions', labelKey: 'settings.extensions' },
   { id: 'engine', labelKey: 'settings.engine' },
   { id: 'defaults', labelKey: 'settings.defaults' },
+  { id: 'dingtalk', labelKey: 'settings.dingtalk' },
   { id: 'approval', labelKey: 'settings.approval' },
 ] as const
 type NavId = (typeof NAV_ITEMS)[number]['id']
@@ -99,6 +111,16 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [busy, setBusy] = useState<BusyAction>(null)
   const [live, setLive] = useState<LiveMessage | null>(null)
   const [approvalStatus, setApprovalStatus] = useState<LiveMessage | null>(null)
+
+  // DingTalk robot bridge: persisted config + live status + busy guard.
+  const [dingtalkConfig, setDingtalkConfig] = useState<DingtalkConfig | null>(null)
+  const [dingtalkStatus, setDingtalkStatus] = useState<DingtalkStatus | null>(null)
+  const [dingtalkBusy, setDingtalkBusy] = useState(false)
+  // Form draft (initialized from the persisted config on mount).
+  const [dingtalkEnabled, setDingtalkEnabled] = useState(false)
+  const [dingtalkClientId, setDingtalkClientId] = useState('')
+  const [dingtalkClientSecret, setDingtalkClientSecret] = useState('')
+  const [dingtalkAllowText, setDingtalkAllowText] = useState('')
 
   // Draft of editable default settings; initialized from the loaded snapshot.
   // `baseline` is the last persisted snapshot: the save patch is derived by
@@ -170,6 +192,12 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   // fallback / models.json keys count; `none` (no API key) is excluded.
   const configuredProviders = providers.filter((p) => p.authStatus !== 'none')
   const anyBusy = busy !== null
+  // Parsed DingTalk allowlist lines (trimmed, empty lines dropped); also
+  // drives the empty-allowlist warning.
+  const dingtalkAllowLines = dingtalkAllowText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
 
   const load = useCallback(async () => {
     setPhase('loading')
@@ -226,6 +254,33 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   // Provider type catalog (pi built-ins + custom) for the New-provider modal.
   useEffect(() => {
     window.pi.getProviderTypes().then(setProviderTypes, () => setProviderTypes([]))
+  }, [])
+
+  // DingTalk robot bridge: initialize the config draft and subscribe to live
+  // status pushes from main (unsubscribe on unmount).
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([window.pi.getDingtalkConfig(), window.pi.getDingtalkStatus()]).then(
+      ([cfg, status]) => {
+        if (cancelled) return
+        setDingtalkConfig(cfg)
+        setDingtalkEnabled(cfg.enabled)
+        setDingtalkClientId(cfg.clientId)
+        setDingtalkClientSecret(cfg.clientSecret)
+        setDingtalkAllowText(cfg.allowList.join('\n'))
+        setDingtalkStatus(status)
+      },
+      () => {
+        if (!cancelled) setDingtalkStatus(null)
+      },
+    )
+    const unsubscribe = window.pi.onDingtalkStatus((status) => {
+      if (!cancelled) setDingtalkStatus(status)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [])
 
   // When opened from the TopBar approval badge: land on the danger partition
@@ -807,6 +862,59 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       }
     } finally {
       setBusy(null)
+    }
+  }
+
+  /**
+   * DingTalk robot bridge. The allowlist textarea holds one staffId per line:
+   * each line is trimmed and empty lines are dropped before the config leaves
+   * the UI. The returned status drives the state card; an error state is
+   * surfaced in the live bar.
+   */
+  const saveDingtalk = async (): Promise<void> => {
+    if (dingtalkBusy || dingtalkConfig === null) return
+    setDingtalkBusy(true)
+    try {
+      const status = await window.pi.saveDingtalkConfig({
+        enabled: dingtalkEnabled,
+        clientId: dingtalkClientId.trim(),
+        clientSecret: dingtalkClientSecret,
+        allowList: dingtalkAllowLines,
+      })
+      setDingtalkStatus(status)
+      setLive(
+        status.state === 'error'
+          ? { kind: 'error', text: t('settings.dingtalk.saveFailed') }
+          : { kind: 'success', text: t('settings.dingtalk.saved') },
+      )
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setDingtalkBusy(false)
+    }
+  }
+
+  const connectDingtalk = async (): Promise<void> => {
+    if (dingtalkBusy) return
+    setDingtalkBusy(true)
+    try {
+      setDingtalkStatus(await window.pi.startDingtalk())
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setDingtalkBusy(false)
+    }
+  }
+
+  const disconnectDingtalk = async (): Promise<void> => {
+    if (dingtalkBusy) return
+    setDingtalkBusy(true)
+    try {
+      setDingtalkStatus(await window.pi.stopDingtalk())
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setDingtalkBusy(false)
     }
   }
 
@@ -1603,6 +1711,111 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                 >
                   {busy === 'save' ? t('settings.saving') : t('settings.saveDefaults')}
                 </button>
+              </section>
+              ) : null}
+
+              {activeNav === 'dingtalk' ? (
+                <section className="sett-section" aria-labelledby="sett-dingtalk-title" data-sett-nav-target="dingtalk">
+                <div className="sett-section-head">
+                  <h3 id="sett-dingtalk-title">{t('settings.dingtalk')}</h3>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={dingtalkBusy}
+                    onClick={() => void saveDingtalk()}
+                  >
+                    <Bot size={13} aria-hidden="true" />
+                    {t('settings.dingtalk.save')}
+                  </button>
+                </div>
+                <p className="sett-hint">{t('settings.dingtalkHint')}</p>
+                <label className="sett-switch-row">
+                  <span className="sett-switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={dingtalkEnabled}
+                      disabled={dingtalkBusy}
+                      aria-label={t('settings.dingtalkEnabled')}
+                      onChange={(e) => setDingtalkEnabled(e.target.checked)}
+                    />
+                    <span className="sett-switch-track" aria-hidden="true" />
+                  </span>
+                  <span className="sett-switch-text">
+                    <span className="sett-switch-title">{t('settings.dingtalkEnabled')}</span>
+                  </span>
+                </label>
+                <div className="sett-field">
+                  <label htmlFor="dingtalk-client-id">{t('settings.dingtalkClientId')}</label>
+                  <input
+                    id="dingtalk-client-id"
+                    className="sett-input"
+                    value={dingtalkClientId}
+                    disabled={dingtalkBusy}
+                    onChange={(e) => setDingtalkClientId(e.target.value)}
+                  />
+                </div>
+                <div className="sett-field">
+                  <label htmlFor="dingtalk-client-secret">{t('settings.dingtalkClientSecret')}</label>
+                  <input
+                    id="dingtalk-client-secret"
+                    type="password"
+                    className="sett-input"
+                    autoComplete="off"
+                    value={dingtalkClientSecret}
+                    disabled={dingtalkBusy}
+                    onChange={(e) => setDingtalkClientSecret(e.target.value)}
+                  />
+                </div>
+                <div className="sett-field">
+                  <label htmlFor="dingtalk-allow-list">{t('settings.dingtalkAllowList')}</label>
+                  <textarea
+                    id="dingtalk-allow-list"
+                    className="sett-textarea"
+                    rows={4}
+                    value={dingtalkAllowText}
+                    disabled={dingtalkBusy}
+                    onChange={(e) => setDingtalkAllowText(e.target.value)}
+                  />
+                  <span className="sett-field-hint">{t('settings.dingtalkAllowListHint')}</span>
+                </div>
+                {dingtalkEnabled && dingtalkAllowLines.length === 0 ? (
+                  <p className="sett-live" role="status">
+                    <span className="sett-live-text sett-live-error">{t('settings.dingtalk.warnAllowAll')}</span>
+                  </p>
+                ) : null}
+                {dingtalkStatus !== null ? (
+                  <div className="sett-readonly" aria-label={t('settings.dingtalkStatus')}>
+                    <span>
+                      {t('settings.dingtalkStatus')}: <strong>{t(DINGTALK_STATE_KEYS[dingtalkStatus.state])}</strong>
+                      {dingtalkStatus.detail !== null ? ` — ${dingtalkStatus.detail}` : ''}
+                    </span>
+                    {dingtalkStatus.connectedAt !== null ? (
+                      <span>
+                        {t('settings.dingtalk.connectedAt')}
+                        <strong>{formatTime(new Date(dingtalkStatus.connectedAt).toISOString())}</strong>
+                      </span>
+                    ) : null}
+                    {dingtalkStatus.lastSender !== null ? (
+                      <span>
+                        {t('settings.dingtalk.lastSender')}
+                        <strong>{dingtalkStatus.lastSender}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="sett-provider-actions">
+                  {dingtalkStatus?.state === 'connected' ? (
+                    <button type="button" className="btn btn-danger" disabled={dingtalkBusy} onClick={() => void disconnectDingtalk()}>
+                      {t('settings.dingtalk.disconnect')}
+                    </button>
+                  ) : (
+                    <button type="button" className="btn" disabled={dingtalkBusy} onClick={() => void connectDingtalk()}>
+                      {t('settings.dingtalk.connect')}
+                    </button>
+                  )}
+                </div>
+                <p className="sett-hint">{t('settings.dingtalk.guide')}</p>
               </section>
               ) : null}
 

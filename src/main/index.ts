@@ -1,8 +1,9 @@
 import { dirname, join } from 'node:path'
 import { delimiter } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isDingtalkConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type DingtalkConfig, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
+import { DingtalkBridge } from './dingtalk'
 import { activateEngineVersion, deactivateEngine, findNpm, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
 import { PiRuntime } from './runtime'
@@ -14,6 +15,15 @@ let runtimeInitialized = false
 let runtimeInitialization: Promise<boolean> | null = null
 /** Persisted tool-approval policy; loaded before runtime.initialize and injected into the runtime. */
 let managedModeStore: ManagedModeStore | null = null
+/** DingTalk robot bridge; created inside whenReady so userData is redirected first. */
+let dingtalkBridge: DingtalkBridge | null = null
+
+function dingtalk(): DingtalkBridge {
+  if (dingtalkBridge === null) throw new Error('DingTalk bridge is not initialized')
+  return dingtalkBridge
+}
+
+const EMPTY_DINGTALK_CONFIG: DingtalkConfig = { enabled: false, clientId: '', clientSecret: '', allowList: [] }
 
 // Test isolation: e2e suites redirect the persisted user-data dir (managed
 // mode, window state, localStorage) so a developer's real profile never
@@ -151,7 +161,17 @@ app.whenReady().then(async () => {
   managedModeStore = new ManagedModeStore(app.getPath('userData'))
   try { await managedModeStore.load() } catch { /* load failure stays 'ask' */ }
   runtime.setToolApprovalMode(managedModeStore.getMode())
+  // DingTalk robot bridge: load persisted config, push status changes to the
+  // renderer, and auto-connect when the feature was left enabled.
+  dingtalkBridge = new DingtalkBridge(runtime, app.getPath('userData'))
+  dingtalkBridge.load()
+  dingtalkBridge.subscribe((status) => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(IPC.dingtalkChanged, status)
+    }
+  })
   await initializeRuntimeOnce()
+  if (dingtalkBridge.getConfig().enabled) void dingtalkBridge.start()
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow() })
 })
 
@@ -278,6 +298,24 @@ ipcMain.handle(IPC.subagentSave, (_event, name: unknown, edit: unknown) =>
   runtime.saveSubagent(textArg(name, 'subagent name'), editArg(edit, 'subagent edit')))
 ipcMain.handle(IPC.subagentDelete, (_event, name: unknown) =>
   runtime.deleteSubagent(textArg(name, 'subagent name')))
+
+// DingTalk robot bridge IPC: config carries secrets, so only the main window
+// may save it; the bridge itself keeps every error as fixed text.
+ipcMain.handle(IPC.dingtalkConfig, () => dingtalkBridge?.getConfig() ?? EMPTY_DINGTALK_CONFIG)
+ipcMain.handle(IPC.dingtalkStatus, () => dingtalkBridge?.getStatus() ?? { state: 'disabled', detail: null, connectedAt: null, lastMessageAt: null, lastSender: null })
+ipcMain.handle(IPC.dingtalkSaveConfig, (event, config: unknown) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted IPC sender')
+  if (!isDingtalkConfig(config)) throw new Error('Invalid dingtalk config')
+  return dingtalk().saveConfig(config)
+})
+ipcMain.handle(IPC.dingtalkStart, (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted IPC sender')
+  return dingtalk().start()
+})
+ipcMain.handle(IPC.dingtalkStop, (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted IPC sender')
+  return dingtalk().stop()
+})
 ipcMain.handle(IPC.customProvider, (_event, config: unknown) => {
   if (!isCustomProviderConfig(config)) throw new Error('Invalid custom provider config')
   return runtime.addCustomProvider(config)
@@ -349,6 +387,13 @@ app.on('before-quit', (event) => {
   if (quitting) return
   quitting = true
   // Only the first before-quit performs the async cleanup; app.exit() then
-  // terminates without re-entering this handler.
-  void runtime.dispose().finally(() => app.exit())
+  // terminates without re-entering this handler. The DingTalk stream socket
+  // is closed first so a quit is never held up by its heartbeat timers.
+  void (async () => {
+    try {
+      dingtalkBridge?.dispose()
+    } finally {
+      await runtime.dispose()
+    }
+  })().finally(() => app.exit())
 })

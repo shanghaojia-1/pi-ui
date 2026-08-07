@@ -6,6 +6,8 @@ import {
   type CustomProviderConfig,
   type DesktopInfo,
   type DesktopPlatform,
+  type DingtalkConfig,
+  type DingtalkStatus,
   type ImageAttachment,
   type PiDesktopApi,
   type ProviderConnectionTest,
@@ -86,6 +88,16 @@ const api: PiDesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot): void => listener(snapshot)
     ipcRenderer.on(IPC.changed, handler)
     return () => ipcRenderer.removeListener(IPC.changed, handler)
+  },
+  getDingtalkConfig: () => ipcRenderer.invoke(IPC.dingtalkConfig),
+  saveDingtalkConfig: (config: DingtalkConfig) => ipcRenderer.invoke(IPC.dingtalkSaveConfig, config),
+  startDingtalk: () => ipcRenderer.invoke(IPC.dingtalkStart),
+  stopDingtalk: () => ipcRenderer.invoke(IPC.dingtalkStop),
+  getDingtalkStatus: () => ipcRenderer.invoke(IPC.dingtalkStatus),
+  onDingtalkStatus: (listener: (status: DingtalkStatus) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: DingtalkStatus): void => listener(status)
+    ipcRenderer.on(IPC.dingtalkChanged, handler)
+    return () => ipcRenderer.removeListener(IPC.dingtalkChanged, handler)
   },
 }
 

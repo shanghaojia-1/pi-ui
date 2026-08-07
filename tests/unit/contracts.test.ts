@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  IPC, isCustomProviderConfig, isImageAttachments, isSettingsPatch, isThinkingLevel, isToolApprovalMode, sanitizeErrorText,
+  IPC, isCustomProviderConfig, isDingtalkConfig, isImageAttachments, isSettingsPatch, isThinkingLevel, isToolApprovalMode, sanitizeErrorText,
   type AppSnapshot, type SettingsSnapshot, type ToolApprovalMode,
 } from '../../src/shared/contracts'
 
@@ -453,5 +453,36 @@ describe('isCustomProviderConfig', () => {
     expect(isCustomProviderConfig({ ...valid, models: [{ id: '' }] })).toBe(false)
     expect(isCustomProviderConfig({ ...valid, models: [{ id: 'm', input: ['video'] }] })).toBe(false)
     expect(isCustomProviderConfig({ ...valid, models: [{ id: 'm', contextWindow: 0 }] })).toBe(false)
+  })
+})
+
+describe('isDingtalkConfig', () => {
+  const valid = { enabled: false, clientId: 'dingxxx', clientSecret: 'secret', allowList: ['staff-1'] }
+
+  it('accepts a complete valid config', () => {
+    expect(isDingtalkConfig(valid)).toBe(true)
+    expect(isDingtalkConfig({ ...valid, enabled: true, allowList: [] })).toBe(true)
+  })
+
+  it('rejects non-objects and missing fields', () => {
+    expect(isDingtalkConfig(null)).toBe(false)
+    expect(isDingtalkConfig('config')).toBe(false)
+    expect(isDingtalkConfig({})).toBe(false)
+    expect(isDingtalkConfig({ ...valid, enabled: 'yes' })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, clientId: undefined })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, clientSecret: undefined })).toBe(false)
+  })
+
+  it('rejects oversized identifiers and secrets', () => {
+    expect(isDingtalkConfig({ ...valid, clientId: 'x'.repeat(129) })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, clientSecret: 'x'.repeat(513) })).toBe(false)
+  })
+
+  it('rejects malformed allowlists', () => {
+    expect(isDingtalkConfig({ ...valid, allowList: 'staff-1' })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, allowList: [''] })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, allowList: ['ok', 42] })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, allowList: Array.from({ length: 33 }, (_, i) => `s${i}`) })).toBe(false)
+    expect(isDingtalkConfig({ ...valid, allowList: ['x'.repeat(129)] })).toBe(false)
   })
 })

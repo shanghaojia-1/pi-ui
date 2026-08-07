@@ -28,6 +28,7 @@
     "verify:artifacts": "node scripts/verify-artifacts.mjs"
   },
   "dependencies": {
+    "dingtalk-stream": "^2.1.5",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

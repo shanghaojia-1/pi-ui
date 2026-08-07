@@ -85,6 +85,12 @@ const api = {
   listSubagents: vi.fn().mockResolvedValue([]),
   saveSubagent: vi.fn().mockResolvedValue([]),
   deleteSubagent: vi.fn().mockResolvedValue([]),
+  getDingtalkConfig: vi.fn().mockResolvedValue({ enabled: false, clientId: '', clientSecret: '', allowList: [] }),
+  saveDingtalkConfig: vi.fn().mockResolvedValue({ state: 'disabled', detail: null, connectedAt: null, lastMessageAt: null, lastSender: null }),
+  startDingtalk: vi.fn().mockResolvedValue({ state: 'disabled', detail: null, connectedAt: null, lastMessageAt: null, lastSender: null }),
+  stopDingtalk: vi.fn().mockResolvedValue({ state: 'disabled', detail: null, connectedAt: null, lastMessageAt: null, lastSender: null }),
+  getDingtalkStatus: vi.fn().mockResolvedValue({ state: 'disabled', detail: null, connectedAt: null, lastMessageAt: null, lastSender: null }),
+  onDingtalkStatus: vi.fn().mockReturnValue(() => {}),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>
@@ -671,7 +677,7 @@ describe('SettingsPanel', () => {
     await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     const nav = screen.getByRole('navigation', { name: '设置分区' })
     const items = nav.querySelectorAll('.sett-nav-item')
-    expect(items.length).toBe(7)
+    expect(items.length).toBe(8)
     expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('外观')
     const approval = Array.from(items).find((b) => b.textContent === '工具审批') as HTMLElement
     fireEvent.click(approval)
@@ -778,5 +784,51 @@ describe('SettingsPanel', () => {
     // The refreshed list no longer shows the deleted agent.
     await waitFor(() => expect(screen.queryByText('scout')).toBeNull())
     confirmSpy.mockRestore()
+  })
+
+  // ---------- DingTalk robot bridge ----------
+
+  it('dingtalk section: pre-fills from config, parses allowlist lines and saves', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.getDingtalkConfig).mockResolvedValue({
+      enabled: true,
+      clientId: 'app-key-1',
+      clientSecret: 'secret-1',
+      allowList: ['staff-1', 'staff-2'],
+    })
+    vi.mocked(api.saveDingtalkConfig).mockResolvedValue({
+      state: 'connected',
+      detail: null,
+      connectedAt: 1_700_000_000_000,
+      lastMessageAt: null,
+      lastSender: 'staff-1',
+    })
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('钉钉远程控制')
+    await waitFor(() => expect(screen.getByRole('heading', { name: /钉钉远程控制/ })).toBeTruthy())
+    // Draft initialized from the persisted config.
+    expect((screen.getByLabelText('Client ID（AppKey）') as HTMLInputElement).value).toBe('app-key-1')
+    expect((screen.getByLabelText('Client Secret（AppSecret）') as HTMLInputElement).value).toBe('secret-1')
+    expect((screen.getByLabelText('允许的发送者（每行一个）') as HTMLTextAreaElement).value).toBe('staff-1\nstaff-2')
+    expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(true)
+    // Edit the fields; the allowlist is trimmed per line with empties dropped.
+    fireEvent.change(screen.getByLabelText('Client ID（AppKey）'), { target: { value: '  app-key-2  ' } })
+    fireEvent.change(screen.getByLabelText('Client Secret（AppSecret）'), { target: { value: 'secret-2' } })
+    fireEvent.change(screen.getByLabelText('允许的发送者（每行一个）'), { target: { value: ' staff-1 \n\nstaff-3\n' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存配置' }))
+    await waitFor(() => expect(api.saveDingtalkConfig).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.saveDingtalkConfig).mock.calls[0]![0]).toEqual({
+      enabled: true,
+      clientId: 'app-key-2',
+      clientSecret: 'secret-2',
+      allowList: ['staff-1', 'staff-3'],
+    })
+    // The returned status drives the state card and the connect/disconnect button.
+    await waitFor(() => expect(screen.getByText('配置已保存')).toBeTruthy())
+    expect(screen.getByText('已连接')).toBeTruthy()
+    expect(screen.getByText('最近消息来自：')).toBeTruthy()
+    expect(screen.getByText('staff-1')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '断开' })).toBeTruthy()
   })
 })
