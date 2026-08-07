@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Folder, FolderOpen, MessageSquare, Plus, Settings, Trash2 } from 'lucide-react'
-import type { AppSnapshot, SessionListItem } from '@shared/contracts'
-import { formatTime, sessionGroup } from '../lib/format'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, MessageSquare, Pencil, Plus, Settings, Trash2, X } from 'lucide-react'
+import type { AppSnapshot, SessionGroup, SessionListItem } from '@shared/contracts'
+import { basename } from '../lib/path'
+import { formatTime } from '../lib/format'
 import { shortcut } from '../lib/shortcuts'
 import { useI18n } from '../lib/i18n'
 
@@ -15,9 +16,21 @@ interface SidebarProps {
   onOpenSettings: () => void
 }
 
-interface SessionGroup {
-  label: string
-  items: SessionListItem[]
+/** localStorage key for the per-group collapsed map. */
+const COLLAPSED_KEY = 'pi-studio-group-collapsed'
+/** Stable key for the ungrouped section. */
+const UNGROUPED_KEY = '__ungrouped__'
+
+const loadCollapsed = (): Record<string, boolean> => {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    const parsed = raw !== null ? (JSON.parse(raw) as unknown) : null
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, boolean>)
+      : {}
+  } catch {
+    return {}
+  }
 }
 
 export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpenSession, onDeleteSession, onOpenSettings }: SidebarProps) {
@@ -25,31 +38,270 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const workspace = snapshot?.workspace ?? null
   /** Session paths awaiting the second (confirming) click; auto-resets on blur. */
   const [confirming, setConfirming] = useState<string | null>(null)
+  /** Group sections currently collapsed (persisted). */
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(loadCollapsed)
+  /** Inline group-creation form state; null = closed. */
+  const [creating, setCreating] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [groupDirs, setGroupDirs] = useState<string[]>([])
+  /** Group id currently being renamed inline. */
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  /** Drop-target highlight per group id (incl. the ungrouped drop zone). */
+  const [dragOver, setDragOver] = useState<string | null>(null)
+  /** Session path being dragged, for a drop ghost hint. */
+  const [dragging, setDragging] = useState<string | null>(null)
+  /** Group id whose "new task" click is in flight (double-click guard). */
+  const [groupBusy, setGroupBusy] = useState<string | null>(null)
+  /** Visible error from group create / dir pick IPC (surfaces main-side failures). */
+  const [groupError, setGroupError] = useState<string | null>(null)
 
-  const groups = useMemo<SessionGroup[]>(() => {
-    const sessions = snapshot?.sessions ?? []
-    const sorted = [...sessions].sort((a, b) => +new Date(b.modifiedAt) - +new Date(a.modifiedAt))
+  const toggle = (key: string): void => {
+    setCollapsed((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)) } catch { /* best effort */ }
+      return next
+    })
+  }
+
+  /** Sessions bucketed by group id; ungrouped sessions keyed by UNGROUPED_KEY. */
+  const buckets = useMemo(() => {
     const byGroup = new Map<string, SessionListItem[]>()
-    for (const s of sorted) {
-      const key = sessionGroup(s.modifiedAt)
+    for (const session of snapshot?.sessions ?? []) {
+      const key = session.groupId ?? UNGROUPED_KEY
       const list = byGroup.get(key)
-      if (list) list.push(s)
-      else byGroup.set(key, [s])
+      if (list) list.push(session)
+      else byGroup.set(key, [session])
     }
-    const labels: Record<string, string> = { today: t('sidebar.groupToday'), yesterday: t('sidebar.groupYesterday'), earlier: t('sidebar.groupEarlier') }
-    const out: SessionGroup[] = []
-    for (const key of ['today', 'yesterday', 'earlier']) {
-      const items = byGroup.get(key)
-      if (items && items.length > 0) out.push({ label: labels[key] ?? key, items })
+    for (const list of byGroup.values()) {
+      list.sort((a, b) => +new Date(b.modifiedAt) - +new Date(a.modifiedAt))
     }
-    return out
+    return byGroup
   }, [snapshot])
+
+  const groups = snapshot?.groups ?? []
+  const ungrouped = buckets.get(UNGROUPED_KEY) ?? []
+  const countOf = (id: string): number => buckets.get(id)?.length ?? 0
+
+  const startCreate = (): void => {
+    setCreating(true)
+    setGroupError(null)
+    setGroupName('')
+    setGroupDirs(workspace ? [workspace.path] : [])
+  }
+
+  const addDir = async (): Promise<void> => {
+    setGroupError(null)
+    try {
+      const dir = await window.pi.pickDirectory()
+      if (dir !== null && !groupDirs.includes(dir)) setGroupDirs((prev) => [...prev, dir])
+    } catch (error) {
+      setGroupError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitCreate = async (): Promise<void> => {
+    const name = groupName.trim()
+    if (name === '' || groupDirs.length === 0) return
+    setGroupError(null)
+    try {
+      await window.pi.createSessionGroup(name, groupDirs)
+      setCreating(false)
+    } catch (error) {
+      setGroupError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const submitRename = async (id: string): Promise<void> => {
+    const name = renameValue.trim()
+    if (name !== '') await window.pi.renameSessionGroup(id, name)
+    setRenaming(null)
+  }
+
+  /**
+   * New task INSIDE a group: switch to the group's bound directory (first
+   * match with the active workspace, else its first dir) and create a fresh
+   * session there, so the new conversation lands in this group.
+   */
+  const newTaskInGroup = async (group: SessionGroup): Promise<void> => {
+    if (groupBusy !== null) return
+    setGroupBusy(group.id)
+    try {
+      const current = snapshot?.workspace?.path ?? null
+      const lower = (p: string): string => p.toLowerCase()
+      const dir = group.dirs.find((d) => current !== null && lower(d) === lower(current)) ?? group.dirs[0]
+      if (dir === undefined) return // groups always have ≥1 dir (validated at creation)
+      if (current === null || !group.dirs.some((d) => lower(d) === lower(current))) {
+        await window.pi.openWorkspace(dir)
+      }
+      await window.pi.newSession()
+    } finally {
+      setGroupBusy(null)
+    }
+  }
+
+  /** Drag helpers: session path travels in the dataTransfer payload. */
+  const onDragStart = (e: React.DragEvent, path: string): void => {
+    e.dataTransfer.setData('text/pi-session', path)
+    e.dataTransfer.effectAllowed = 'move'
+    setDragging(path)
+  }
+  const onDrop = async (e: React.DragEvent, groupId: string | null): Promise<void> => {
+    e.preventDefault()
+    setDragOver(null)
+    setDragging(null)
+    const path = e.dataTransfer.getData('text/pi-session')
+    if (path !== '') await window.pi.moveSessionToGroup(path, groupId)
+  }
+
+  const renderSession = (item: SessionListItem): React.ReactNode => {
+    const active = item.path === snapshot?.activeSessionPath
+    const confirmDelete = confirming === item.path
+    return (
+      <div
+        key={item.id}
+        className={`session-item${active ? ' session-item-active' : ''}${dragging === item.path ? ' session-item-dragging' : ''}`}
+        aria-current={active ? 'true' : undefined}
+        draggable
+        onDragStart={(e) => onDragStart(e, item.path)}
+        onDragEnd={() => setDragging(null)}
+      >
+        <button
+          type="button"
+          className="session-open"
+          title={item.preview}
+          onClick={() => onOpenSession(item.path)}
+        >
+          <span className="session-title">
+            <MessageSquare size={12} className="session-icon" aria-hidden="true" />
+            <span className="session-title-text">{item.title}</span>
+            <span className="session-time">{formatTime(item.modifiedAt)}</span>
+          </span>
+          <span className="session-preview">{item.preview}</span>
+          {item.workspace ? (
+            <span className="session-ws" title={item.workspace.path}>
+              <Folder size={10} className="session-ws-icon" aria-hidden="true" />
+              <span className="session-ws-name">{item.workspace.name}</span>
+            </span>
+          ) : null}
+          <span className="session-meta">{t('sidebar.messages', { n: item.messageCount })}</span>
+        </button>
+        <button
+          type="button"
+          className={`session-delete${confirmDelete ? ' session-delete-confirm' : ''}`}
+          aria-label={confirmDelete ? t('sidebar.confirmDeleteTitle', { title: item.title }) : t('sidebar.deleteTitle', { title: item.title })}
+          title={confirmDelete ? t('sidebar.confirmDeleteHint') : t('sidebar.deleteSession')}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (confirmDelete) {
+              setConfirming(null)
+              onDeleteSession(item.path)
+            } else {
+              setConfirming(item.path)
+            }
+          }}
+          onBlur={() => {
+            if (confirming === item.path) setConfirming(null)
+          }}
+        >
+          <Trash2 size={12} aria-hidden="true" />
+          {confirmDelete ? <span>{t('sidebar.confirmDelete')}</span> : null}
+        </button>
+      </div>
+    )
+  }
+
+  const renderGroup = (group: SessionGroup): React.ReactNode => {
+    const items = buckets.get(group.id) ?? []
+    const open = !collapsed[group.id]
+    const renamingThis = renaming === group.id
+    return (
+      <div
+        key={group.id}
+        className={`session-group${dragOver === group.id ? ' session-group-dragover' : ''}`}
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOver(group.id) }}
+        onDragLeave={() => setDragOver((cur) => (cur === group.id ? null : cur))}
+        onDrop={(e) => void onDrop(e, group.id)}
+      >
+        <div
+          className="session-group-head"
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          onClick={() => toggle(group.id)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(group.id) } }}
+        >
+          {open ? <ChevronDown size={12} className="session-group-chevron" aria-hidden="true" /> : <ChevronRight size={12} className="session-group-chevron" aria-hidden="true" />}
+          <Folder size={12} className="session-group-icon" aria-hidden="true" />
+          {renamingThis ? (
+            <input
+              className="session-group-rename"
+              value={renameValue}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitRename(group.id)
+                if (e.key === 'Escape') setRenaming(null)
+              }}
+              onBlur={() => void submitRename(group.id)}
+            />
+          ) : (
+            <span className="session-group-name" title={group.dirs.map((d) => d).join('\n')}>{group.name}</span>
+          )}
+          <span className="session-group-count">{items.length}</span>
+          <span className="session-group-actions">
+            <button
+              type="button"
+              className="btn-icon session-group-btn"
+              aria-label={t('sidebar.newTaskInGroup', { name: group.name })}
+              title={t('sidebar.newTaskInGroupHint')}
+              disabled={groupBusy === group.id || busy}
+              onClick={(e) => {
+                e.stopPropagation()
+                void newTaskInGroup(group)
+              }}
+            >
+              <Plus size={11} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="btn-icon session-group-btn"
+              aria-label={t('sidebar.renameGroup')}
+              title={t('sidebar.renameGroup')}
+              onClick={(e) => {
+                e.stopPropagation()
+                setRenaming(group.id)
+                setRenameValue(group.name)
+              }}
+            >
+              <Pencil size={11} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="btn-icon session-group-btn session-group-btn-del"
+              aria-label={t('sidebar.deleteGroup')}
+              title={t('sidebar.deleteGroupHint')}
+              onClick={(e) => {
+                e.stopPropagation()
+                void window.pi.deleteSessionGroup(group.id)
+              }}
+            >
+              <Trash2 size={11} aria-hidden="true" />
+            </button>
+          </span>
+        </div>
+        {open ? <div className="session-group-items">{items.map(renderSession)}</div> : null}
+      </div>
+    )
+  }
 
   return (
     <div className="sidebar">
       <div className="sidebar-workspace">
         <div className="sidebar-ws-row">
-          <Folder size={14} className="sidebar-ws-icon" aria-hidden="true" />
+          <FolderOpen size={14} className="sidebar-ws-icon" aria-hidden="true" />
           <span className="sidebar-ws-name" title={workspace?.name}>
             {workspace ? workspace.name : t('sidebar.workspaceNotOpen')}
           </span>
@@ -80,69 +332,86 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
       </div>
 
       <div className="sidebar-sessions" aria-label={t('sidebar.sessionsLabel')}>
-        {groups.length === 0 ? (
+        {groups.length === 0 && ungrouped.length === 0 && !creating ? (
           <div className="sidebar-empty">
             {workspace ? t('sidebar.noSessions') : t('sidebar.openDirHint')}
           </div>
-        ) : (
-          groups.map((group) => (
-            <div key={group.label} className="session-group">
-              <div className="session-group-label">{group.label}</div>
-              {group.items.map((item) => {
-                const active = item.path === snapshot?.activeSessionPath
-                const confirmDelete = confirming === item.path
-                return (
-                  <div
-                    key={item.id}
-                    className={`session-item${active ? ' session-item-active' : ''}`}
-                    aria-current={active ? 'true' : undefined}
-                  >
-                    <button
-                      type="button"
-                      className="session-open"
-                      title={item.preview}
-                      onClick={() => onOpenSession(item.path)}
-                    >
-                      <span className="session-title">
-                        <MessageSquare size={12} className="session-icon" aria-hidden="true" />
-                        <span className="session-title-text">{item.title}</span>
-                        <span className="session-time">{formatTime(item.modifiedAt)}</span>
-                      </span>
-                      <span className="session-preview">{item.preview}</span>
-                      {item.workspace ? (
-                        <span className="session-ws" title={item.workspace.path}>
-                          <Folder size={10} className="session-ws-icon" aria-hidden="true" />
-                          <span className="session-ws-name">{item.workspace.name}</span>
-                        </span>
-                      ) : null}
-                      <span className="session-meta">{t('sidebar.messages', { n: item.messageCount })}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className={`session-delete${confirmDelete ? ' session-delete-confirm' : ''}`}
-                      aria-label={confirmDelete ? t('sidebar.confirmDeleteTitle', { title: item.title }) : t('sidebar.deleteTitle', { title: item.title })}
-                      title={confirmDelete ? t('sidebar.confirmDeleteHint') : t('sidebar.deleteSession')}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (confirmDelete) {
-                          setConfirming(null)
-                          onDeleteSession(item.path)
-                        } else {
-                          setConfirming(item.path)
-                        }
-                      }}
-                      onBlur={() => {
-                        if (confirming === item.path) setConfirming(null)
-                      }}
-                    >
-                      <Trash2 size={12} aria-hidden="true" />
-                      {confirmDelete ? <span>{t('sidebar.confirmDelete')}</span> : null}
-                    </button>
-                  </div>
-                )
-              })}
+        ) : null}
+
+        {groups.map(renderGroup)}
+
+        {/* Ungrouped sessions live flat OUTSIDE every group: no collapsible
+            header — a plain drop zone under the groups (Codex-style). */}
+        {groups.length > 0 || ungrouped.length > 0 || creating ? (
+          <div
+            key={UNGROUPED_KEY}
+            className={`session-ungrouped${dragOver === UNGROUPED_KEY ? ' session-group-dragover' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOver(UNGROUPED_KEY) }}
+            onDragLeave={() => setDragOver((cur) => (cur === UNGROUPED_KEY ? null : cur))}
+            onDrop={(e) => void onDrop(e, null)}
+          >
+            {workspace ? (
+              <button type="button" className="session-ungrouped-new" onClick={onNewSession} disabled={busy}>
+                <Plus size={11} aria-hidden="true" />
+                <span>{t('sidebar.newTaskHere')}</span>
+              </button>
+            ) : null}
+            {ungrouped.map(renderSession)}
+          </div>
+        ) : null}
+        {creating ? (
+          <div className="group-form">
+            <div className="group-form-row">
+              <input
+                className="group-form-name"
+                value={groupName}
+                placeholder={t('sidebar.groupNamePh')}
+                aria-label={t('sidebar.groupName')}
+                autoFocus
+                onChange={(e) => setGroupName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void submitCreate() }}
+              />
+              <button type="button" className="btn-icon group-form-close" aria-label={t('common.close')} onClick={() => setCreating(false)}>
+                <X size={12} aria-hidden="true" />
+              </button>
             </div>
-          ))
+            <div className="group-form-dirs">
+              {groupDirs.map((dir) => (
+                <span key={dir} className="group-dir" title={dir}>
+                  <Folder size={10} aria-hidden="true" />
+                  <span className="group-dir-name">{basename(dir)}</span>
+                  <button
+                    type="button"
+                    className="group-dir-remove"
+                    aria-label={t('sidebar.removeDir')}
+                    onClick={() => setGroupDirs((prev) => prev.filter((d) => d !== dir))}
+                  >
+                    <X size={9} aria-hidden="true" />
+                  </button>
+                </span>
+              ))}
+              <button type="button" className="group-dir-add" onClick={() => void addDir()}>
+                <Plus size={10} aria-hidden="true" />
+                <span>{t('sidebar.addDir')}</span>
+              </button>
+            </div>
+            <div className="group-form-actions">
+              {groupError !== null ? <span className="group-form-error">{groupError}</span> : null}
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => void submitCreate()}
+                disabled={groupName.trim() === '' || groupDirs.length === 0}
+              >
+                {t('sidebar.createGroup')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="session-group-add" onClick={startCreate} disabled={!workspace}>
+            <Plus size={12} aria-hidden="true" />
+            <span>{t('sidebar.newGroup')}</span>
+          </button>
         )}
       </div>
 

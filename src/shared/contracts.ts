@@ -15,6 +15,30 @@ export interface DesktopInfo {
 }
 
 export interface WorkspaceInfo { path: string; name: string }
+
+/**
+ * A user-created sidebar group: a name plus workspace directories. Sessions
+ * whose cwd matches one of `dirs` land here automatically; explicit drag
+ * memberships (`members` map, value `groupId` or the sentinel `ungrouped`)
+ * override the dir rule. Persisted at ~/.pi/agent/session-groups.json.
+ */
+export interface SessionGroup {
+  id: string
+  name: string
+  /** Workspace directories bound to this group (canonical paths). */
+  dirs: string[]
+}
+
+export interface SessionGroupsConfig {
+  version: 1
+  groups: SessionGroup[]
+  /** Explicit session membership: canonical session path -> group id or 'ungrouped'. */
+  members: Record<string, string>
+}
+
+/** Sentinel membership value: pinned OUT of every group, even when the cwd matches. */
+export const UNGROUPED = 'ungrouped'
+
 export interface SessionListItem {
   id: string
   path: string
@@ -24,6 +48,8 @@ export interface SessionListItem {
   messageCount: number
   /** Working directory this session belongs to; may differ from the active workspace. */
   workspace: WorkspaceInfo | null
+  /** Sidebar group this session belongs to; null = ungrouped. */
+  groupId: string | null
 }
 export interface ModelInfo {
   provider: string
@@ -277,6 +303,7 @@ export interface AppSnapshot {
   workspace: WorkspaceInfo | null
   activeSessionPath: string | null
   sessions: SessionListItem[]
+  groups: SessionGroup[]
   models: ModelInfo[]
   activeModel: string | null
   thinkingLevel: ThinkingLevel
@@ -303,6 +330,14 @@ export interface PiDesktopApi {
   exportSession(): Promise<string | null>
   getSessionStats(): Promise<SessionStatsInfo | null>
   reloadSession(): Promise<AppSnapshot>
+  /** Picks a directory via the native dialog; null when cancelled. Used by group creation. */
+  pickDirectory(): Promise<string | null>
+  /** Creates a session group bound to the given workspace directories. */
+  createSessionGroup(name: string, dirs: string[]): Promise<AppSnapshot>
+  renameSessionGroup(id: string, name: string): Promise<AppSnapshot>
+  deleteSessionGroup(id: string): Promise<AppSnapshot>
+  /** Pins a session to a group (drag) — or out of every group when id is null. */
+  moveSessionToGroup(sessionPath: string, groupId: string | null): Promise<AppSnapshot>
   quitApp(): Promise<void>
   getAppInfo(): Promise<AppInfo>
   getDynamicCommands(): Promise<DynamicCommand[]>
@@ -333,6 +368,7 @@ export const IPC = {
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
+  pickDirectory: 'pi:pick-directory', createSessionGroup: 'pi:create-session-group', renameSessionGroup: 'pi:rename-session-group', deleteSessionGroup: 'pi:delete-session-group', moveSessionToGroup: 'pi:move-session-to-group',
   dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   changed: 'pi:changed',
@@ -348,6 +384,22 @@ export function isToolApprovalMode(value: unknown): value is ToolApprovalMode {
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Group id: a short identifier ('g' + 8 hex chars). Never user-controlled.
+ */
+export function isSessionGroupName(value: unknown): value is string {
+  return isBoundedString(value, 1, 64)
+}
+
+/** Bounded list of canonical directory paths for a group (1..20 entries). */
+export function isGroupDirs(value: unknown): value is string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 20) return false
+  for (const dir of value) {
+    if (typeof dir !== 'string' || dir.length < 1 || dir.length > 1024) return false
+  }
+  return true
 }
 
 /** Bounded non-empty string; reusable by main for provider/key/name validation. */
