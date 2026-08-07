@@ -168,8 +168,32 @@ const slimToolDetails = (details: unknown): unknown => {
  */
 export const RUN_CLEANUP_TIMEOUT_MS = 10_000
 
-/** Trailing delay that coalesces high-frequency message_update IPC into one send. */
-const LIVE_FLUSH_DELAY_MS = 16
+/**
+ * Bounds the network-forced model catalog refresh (settings "refresh models").
+ * The engine's refresh accepts an AbortSignal and propagates it to every
+ * provider fetch; without this, one unreachable host would wedge the whole
+ * serialized mutation chain forever.
+ */
+const MODEL_REFRESH_TIMEOUT_MS = 30_000
+
+/**
+ * Watchdog for manual compaction: a wedged summarization request (endpoint
+ * accepts the connection but never streams) must not poison the opChain —
+ * every later settings/session mutation, including abort, queues behind it
+ * and the app becomes unable to recover without a restart. After this budget
+ * the in-flight compaction is cancelled via the SDK's abortCompaction so the
+ * chain advances.
+ */
+const COMPACT_WATCHDOG_MS = 5 * 60_000
+
+/**
+ * Trailing delay that coalesces high-frequency snapshot IPC (message_update
+ * tokens, tool_execution_update subagent progress) into one send. Each send
+ * carries a FULL serialized session, so the cadence directly caps main-side
+ * serialization and IPC bytes: 50ms keeps token rendering fluid (~20fps)
+ * while cutting per-flush work ~3x vs 16ms on long sessions.
+ */
+const LIVE_FLUSH_DELAY_MS = 50
 
 /** Floor on the elapsed-seconds denominator of the final token rate. */
 const MIN_RATE_ELAPSED_SEC = 1
@@ -1435,12 +1459,18 @@ export class PiRuntime {
   /** `/compact [prompt]`: manually compact the active session context. */
   compactSession(customInstructions?: string): Promise<AppSnapshot> {
     return this.enqueue(async () => {
+      const session = this.session
+      if (!session) throw new Error('No active session')
+      // Watchdog: a wedged summarization endpoint (connection accepted, no
+      // bytes) must not block the opChain forever. abortCompaction cancels
+      // the in-flight summarization stream; the SDK then settles compact()
+      // and emits compaction_end(aborted), and the chain advances.
+      const watchdog = setTimeout(() => session.abortCompaction(), COMPACT_WATCHDOG_MS)
       try {
-        const session = this.session
-        if (!session) throw new Error('No active session')
         const instructions = customInstructions?.trim()
         await session.compact(instructions !== undefined && instructions !== '' ? instructions : undefined)
       } catch (error) { this.recordError('Compaction failed', error) }
+      finally { clearTimeout(watchdog) }
     }).then(() => this.snapshot())
   }
 
@@ -1877,12 +1907,20 @@ export class PiRuntime {
   /**
    * Network-forced catalog refresh plus the local models-list reload. Refresh
    * errors are reduced to a single throw: per-provider Error messages may
-   * embed credentials, so only the count (or none) is ever surfaced.
+   * embed credentials, so only the count (or none) is ever surfaced. Bounded
+   * by MODEL_REFRESH_TIMEOUT_MS: refresh() propagates the signal into every
+   * provider fetch, so an unreachable catalog host cannot wedge the opChain.
    */
   private async refreshModelCatalog(): Promise<void> {
-    const result = await this.modelRuntime?.refresh({ allowNetwork: true, force: true })
-    await this.reloadModels()
-    if (result && result.errors.size > 0) throw new Error('Model refresh failed')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), MODEL_REFRESH_TIMEOUT_MS)
+    try {
+      const result = await this.modelRuntime?.refresh({ allowNetwork: true, force: true, signal: controller.signal })
+      await this.reloadModels()
+      if (result && result.errors.size > 0) throw new Error('Model refresh failed')
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**
@@ -2054,7 +2092,7 @@ export class PiRuntime {
       }
       case 'tool_execution_update': {
         const id = this.liveUpdateTarget(event.toolCallId)
-        if (id === null) break
+        if (id === null) return
         const previous = this.liveTools.get(id)
         // The SDK forwards the FULL AgentToolResult (content + details) as
         // partialResult. Streaming details are slimmed (messages dropped) so
@@ -2069,7 +2107,11 @@ export class PiRuntime {
           output,
           ...(details !== null ? { details } : {}),
         })
-        break
+        // Subagent streaming fires many updates per second and every flush
+        // ships a full-session snapshot: coalesce at the same trailing cadence
+        // as message_update instead of emitting once per event.
+        this.scheduleFlush()
+        return
       }
       case 'tool_execution_end': {
         const id = this.liveEndTarget(event.toolCallId)
@@ -2662,14 +2704,17 @@ export class PiRuntime {
     this.emit()
   }
 
-  /** Trailing 16ms merge for high-frequency message_update events; unref'd. */
+  /** Trailing merge for high-frequency snapshot events; unref'd. */
   private scheduleFlush(): void {
     if (this.liveFlushTimer !== null) return
+    const session = this.session
+    const epoch = this.epoch
     this.liveFlushTimer = setTimeout(() => {
       this.liveFlushTimer = null
-      const live = this.liveAssistant
-      // Session/epoch check: a stale timer must never emit for a newer session.
-      if (live && live.session === this.session && live.epoch === this.epoch) this.emit()
+      // Session/epoch check captured at schedule time: a stale timer must
+      // never emit for a newer session, while events outside a live turn
+      // (compaction, tool updates) may still flush.
+      if (session === this.session && epoch === this.epoch) this.emit()
     }, LIVE_FLUSH_DELAY_MS)
     this.liveFlushTimer.unref?.()
   }

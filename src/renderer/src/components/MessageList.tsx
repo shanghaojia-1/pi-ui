@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Brain, ChevronRight, Shrink, UserRound } from 'lucide-react'
-import type { ChatMessage, ImageBlock, TextBlock } from '@shared/contracts'
+import type { ChatMessage, ImageBlock, TextBlock, ToolBlock } from '@shared/contracts'
 import ToolCall from './ToolCall'
 import Markdown from './Markdown'
 import ImageLightbox from './Lightbox'
@@ -215,6 +215,45 @@ interface MessageListProps {
   onSuggest: (text: string) => void
 }
 
+/**
+ * Value-based message equality for memoizing Message. serializeMessages()
+ * rebuilds every message object on each snapshot, but strings are primitives
+ * (compared by value), so unchanged content is detectable without allocation:
+ * only the live turn (text/tool updates) and discrete transitions (tool
+ * status flips, isStreaming at message_end) actually differ across flushes.
+ * Skipping equal messages avoids re-rendering every historical card on each
+ * of the ~20 snapshots/sec the runtime ships during streaming.
+ */
+function messageEqual(prev: { message: ChatMessage }, next: { message: ChatMessage }): boolean {
+  const a = prev.message
+  const b = next.message
+  if (a === b) return true
+  if (a.id !== b.id || a.role !== b.role || a.timestamp !== b.timestamp || a.isStreaming !== b.isStreaming) return false
+  const ab = a.blocks
+  const bb = b.blocks
+  if (ab.length !== bb.length) return false
+  for (let i = 0; i < ab.length; i += 1) {
+    const x = ab[i]
+    const y = bb[i]
+    if (x === undefined || y === undefined) return false
+    if (x.type === 'image' || y.type === 'image') {
+      if (x.type !== 'image' || y.type !== 'image' || x.data !== y.data || x.mimeType !== y.mimeType) return false
+      continue
+    }
+    if (x.type === 'tool' && y.type === 'tool') {
+      if (x.id !== y.id || x.name !== y.name || x.status !== y.status || x.input !== y.input || x.output !== y.output || x.patch !== y.patch || x.durationMs !== y.durationMs) return false
+      // details (subagent progress) is an arbitrary payload; value-compare it.
+      if (JSON.stringify(x.details ?? null) !== JSON.stringify(y.details ?? null)) return false
+      continue
+    }
+    if (x.type !== y.type) return false
+    if ((x as TextBlock).text !== (y as TextBlock).text) return false
+  }
+  return true
+}
+
+const MessageItem = memo(Message, messageEqual)
+
 export default function MessageList({ messages, pendingText, workspaceName, onSuggest }: MessageListProps) {
   const { t } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -310,7 +349,7 @@ export default function MessageList({ messages, pendingText, workspaceName, onSu
       aria-live="polite"
     >
       {items.map((message) => (
-        <Message key={message.id} message={message} />
+        <MessageItem key={message.id} message={message} />
       ))}
       {pendingText !== null ? (
         <div className="msg msg-user">

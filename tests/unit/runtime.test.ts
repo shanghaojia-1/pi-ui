@@ -1336,7 +1336,7 @@ describe('live assistant streaming', () => {
       priv(runtime).handleEvent(updateEvent(textMsg('He')))
       priv(runtime).handleEvent(updateEvent(textMsg('Hello')))
       expect(window.webContents.send).toHaveBeenCalledTimes(1) // only the start flush so far
-      await vi.advanceTimersByTimeAsync(16)
+      await vi.advanceTimersByTimeAsync(50)
       expect(window.webContents.send).toHaveBeenCalledTimes(2)
       const snap = runtime.snapshot()
       expect(snap.messages).toHaveLength(1)
@@ -1354,7 +1354,7 @@ describe('live assistant streaming', () => {
       priv(runtime).handleEvent(startEvent(textMsg('')))
       for (let i = 1; i <= 100; i += 1) priv(runtime).handleEvent(updateEvent(textMsg(`delta ${i}`)))
       expect(window.webContents.send).toHaveBeenCalledTimes(1)
-      await vi.advanceTimersByTimeAsync(16)
+      await vi.advanceTimersByTimeAsync(50)
       expect(window.webContents.send).toHaveBeenCalledTimes(2)
       expect(runtime.snapshot().messages[0]!.blocks).toEqual([{ type: 'text', text: 'delta 100' }])
     } finally {
@@ -2403,7 +2403,7 @@ describe('settings', () => {
     // Only the public refreshModels path may force a network refresh.
     await runtime.refreshModels()
     expect(mr.refresh).toHaveBeenCalledTimes(1)
-    expect(mr.refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true })
+    expect(mr.refresh).toHaveBeenCalledWith(expect.objectContaining({ allowNetwork: true, force: true }))
   })
 
   it('refreshModels refreshes with network+force and reduces errors to one fixed message', async () => {
@@ -2414,7 +2414,7 @@ describe('settings', () => {
     })
     const { runtime } = await init()
     const settings = await runtime.refreshModels()
-    expect(mr.refresh).toHaveBeenCalledWith({ allowNetwork: true, force: true })
+    expect(mr.refresh).toHaveBeenCalledWith(expect.objectContaining({ allowNetwork: true, force: true }))
     expect(settings.error).toEqual({ message: '刷新模型列表失败', recoverable: true })
     expect(JSON.stringify(settings)).not.toContain(SECRET)
     expect(JSON.stringify(settings)).not.toContain('catalog boom')
