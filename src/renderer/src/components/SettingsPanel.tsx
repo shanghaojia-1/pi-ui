@@ -903,7 +903,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                           <span className="sett-extension-name" title={extension.path}>
                             {extension.name}
                           </span>
-                          <span className="sett-extension-source">{t(`settings.extensionsSource.${extension.sourceLabel}`)}</span>
+                          <span className="sett-extension-source">
+                            {t(`settings.extensionsSource.${extension.sourceLabel}`)}
+                            {extension.version !== null ? ` · v${extension.version}` : ''}
+                          </span>
                         </div>
                         <span className="sett-extension-meta">
                           <span>{t('settings.extensionsCommands', { n: extension.commandCount })}</span>

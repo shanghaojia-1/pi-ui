@@ -236,6 +236,8 @@ export interface ExtensionInfo {
   name: string
   /** Extension origin scope: user, project or built-in. */
   sourceLabel: 'user' | 'project' | 'temporary'
+  /** Version from the nearest package.json (npm/git packages); null otherwise. */
+  version: string | null
   commandCount: number
   toolCount: number
   handlerCount: number

@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
+import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { BrowserWindow, clipboard, dialog, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import type {
@@ -1392,6 +1392,7 @@ export class PiRuntime {
           resolvedPath: extension.resolvedPath,
           sourceLabel: scope,
           name: isPackage ? source.slice(4) : this.extensionFileDisplayName(extension.resolvedPath),
+          version: this.nearestPackageVersion(extension.resolvedPath),
           ...stats,
         })
       }
@@ -1408,6 +1409,29 @@ export class PiRuntime {
   private extensionFileDisplayName(resolvedPath: string): string {
     const file = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath
     return file.replace(/\.(js|ts|mjs|cjs)$/i, '')
+  }
+
+  /**
+   * Version of the package owning an extension file, found by walking up from
+   * the resolved path to the nearest package.json. Standalone files (no
+   * package.json, or one without a version) yield null.
+   */
+  private nearestPackageVersion(resolvedPath: string): string | null {
+    try {
+      let dir = dirname(resolvedPath)
+      for (let depth = 0; depth < 8; depth += 1) {
+        const candidate = join(dir, 'package.json')
+        if (existsSync(candidate)) {
+          const pkg = JSON.parse(readFileSync(candidate, 'utf8')) as { version?: unknown }
+          if (typeof pkg.version === 'string' && pkg.version !== '') return pkg.version
+          return null
+        }
+        const parent = dirname(dir)
+        if (parent === dir) return null
+        dir = parent
+      }
+    } catch { /* unreadable package.json */ }
+    return null
   }
 
   /**
