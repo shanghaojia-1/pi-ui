@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Brain, ChevronRight, UserRound } from 'lucide-react'
 import type { ChatMessage, ImageBlock, TextBlock } from '@shared/contracts'
 import ToolCall from './ToolCall'
@@ -198,10 +198,34 @@ export default function MessageList({ messages, pendingText, workspaceName, onSu
     return out
   }, [messages])
 
-  useEffect(() => {
+  /**
+   * Stick-to-bottom: paints BEFORE the browser draws, so a growing message
+   * (thinking text, streaming output) never shows a blank frame below the
+   * viewport. Plain scrollTop assignment is instant — the container has no
+   * smooth-scroll behavior, which would restart an animation on every update
+   * and stall the thumb at a stale position during fast streaming.
+   */
+  useLayoutEffect(() => {
     const el = scrollRef.current
     if (el && stickRef.current) el.scrollTop = el.scrollHeight
   }, [items, pendingText])
+
+  /**
+   * Content-height changes that do NOT re-render this component (expanding or
+   * collapsing a thinking/tool block, image load finishing) leave the thumb
+   * at a stale offset while stick is active. A MutationObserver keeps the
+   * viewport glued to the bottom for any DOM growth inside the list.
+   */
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const sync = (): void => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight
+    }
+    const observer = new MutationObserver(sync)
+    observer.observe(el, { childList: true, subtree: true, characterData: true })
+    return () => observer.disconnect()
+  }, [])
 
   if (messages.length === 0 && pendingText === null) {
     return (

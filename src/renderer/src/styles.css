@@ -893,7 +893,10 @@ li[aria-selected='true'] > .select-item {
      because overflow-y is set. */
   overflow-x: hidden;
   padding: 18px 0 12px;
-  scroll-behavior: smooth;
+  /* No scroll-behavior: smooth here: programmatic stick-to-bottom runs on
+     every streaming update, and smooth scrolling would restart the animation
+     on each assignment, stalling the thumb at a stale position while content
+     grows (visible as blank space below the viewport). */
 }
 .msg {
   display: flex;
