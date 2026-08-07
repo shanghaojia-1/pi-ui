@@ -290,6 +290,25 @@ export interface AppSnapshot {
   error: AppError | null
 }
 
+/** A configured pi package (settings.json `packages` entry) with its installed version. */
+export interface PackageInfo {
+  /** Settings source string, e.g. `npm:pi-subagents`. */
+  source: string
+  /** Package name without the `npm:` / `git:` prefix. */
+  displayName: string
+  type: 'npm' | 'git'
+  scope: 'user' | 'project'
+  /** Version read from the installed package.json; null when not installed. */
+  version: string | null
+}
+
+/** Package-management state surfaced to the Settings extensions section. */
+export interface PackagesInfo {
+  packages: PackageInfo[]
+  /** Sources with newer versions available on the registry. */
+  updateSources: string[]
+}
+
 /** Active pi engine: version, source and where it was loaded from. */
 export interface ActiveEngineInfo {
   version: string
@@ -356,6 +375,15 @@ export interface PiDesktopApi {
   uninstallEngine(version: string): Promise<void>
   /** Clears any external activation (back to the builtin engine). */
   deactivateEngine(): Promise<void>
+  getPackages(): Promise<PackagesInfo>
+  /** Installs a package source (npm:name or git:url) and persists it to settings.json. */
+  installPackage(source: string): Promise<void>
+  /** Updates one configured package, or all of them when source is omitted. */
+  updatePackages(source?: string): Promise<void>
+  /** Uninstalls a package and removes it from settings.json. */
+  removePackage(source: string): Promise<void>
+  /** Sources with newer versions available on the registry. */
+  checkPackageUpdates(): Promise<string[]>
   onSnapshot(listener: (snapshot: AppSnapshot) => void): () => void
 }
 
@@ -369,6 +397,7 @@ export const IPC = {
   dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',
+  packages: 'pi:packages', packageInstall: 'pi:package-install', packageUpdate: 'pi:package-update', packageRemove: 'pi:package-remove', packageCheck: 'pi:package-check',
   changed: 'pi:changed',
 } as const
 
@@ -382,6 +411,12 @@ export function isToolApprovalMode(value: unknown): value is ToolApprovalMode {
 
 export function isEngineVersion(value: unknown): value is string {
   return typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value)
+}
+
+/** Whitelist for package sources: `npm:name` or `git:url`, no whitespace/control chars. */
+export function isPackageSource(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 4 && value.length <= 512
+    && /^(npm|git):[^\s"'`$&;|<>]+$/.test(value)
 }
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {

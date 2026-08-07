@@ -5,6 +5,7 @@ import { BrowserWindow, clipboard, dialog, type MessageBoxOptions, type OpenDial
 import type {
   AgentSession,
   AgentSessionEvent,
+  DefaultPackageManager,
   ExtensionError,
   InlineExtension,
   ModelRuntime,
@@ -13,7 +14,7 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import { getEngineApi } from './engine-loader'
 import type {
-  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo,
+  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
@@ -226,6 +227,8 @@ export class PiRuntime {
   private session: AgentSession | null = null
   private unsubscribe: (() => void) | null = null
   private modelRuntime: ModelRuntime | null = null
+  /** Official package manager (pi install/update/uninstall), scoped to the current session. */
+  private packageManager: DefaultPackageManager | null = null
   private models: ModelInfo[] = []
   private sessions: SessionListItem[] = []
   private runState: RunState = 'idle'
@@ -529,6 +532,13 @@ export class PiRuntime {
       // Promote the candidate only after binding and subscription succeeded; a
       // failure above never leaves an unapproved session behind.
       this.session = session
+      // Package manager (pi install/update/uninstall) scoped to this session's
+      // settings manager and workspace; recreated on every session switch.
+      this.packageManager = new (getEngineApi().DefaultPackageManager)({
+        cwd: this.workspace.path,
+        agentDir: getEngineApi().getAgentDir(),
+        settingsManager: session.settingsManager,
+      })
       this.restoreHistoryTelemetry()
       this.runState = 'idle'
       this.statusText = 'Ready'
@@ -1398,6 +1408,72 @@ export class PiRuntime {
   private extensionFileDisplayName(resolvedPath: string): string {
     const file = resolvedPath.split(/[\\/]/).pop() ?? resolvedPath
     return file.replace(/\.(js|ts|mjs|cjs)$/i, '')
+  }
+
+  /**
+   * Version of an installed npm/git package, read from its package.json
+   * (listConfiguredPackages gives the install path; the version is never
+   * stored in settings.json).
+   */
+  private packageVersion(installedPath: string | undefined): string | null {
+    if (!installedPath) return null
+    try {
+      const pkg = JSON.parse(readFileSync(join(installedPath, 'package.json'), 'utf8')) as { version?: unknown }
+      return typeof pkg.version === 'string' && pkg.version !== '' ? pkg.version : null
+    } catch {
+      return null
+    }
+  }
+
+  /** Configured packages (settings.json `packages`) with versions, for the Settings UI. */
+  async listPackages(): Promise<PackagesInfo> {
+    const manager = this.packageManager
+    if (!manager) return Promise.resolve({ packages: [], updateSources: [] })
+    try {
+      const packages = manager.listConfiguredPackages().map((pkg) => ({
+        source: pkg.source,
+        displayName: pkg.source.replace(/^(npm|git):/, ''),
+        type: pkg.source.startsWith('git:') ? 'git' as const : 'npm' as const,
+        scope: pkg.scope,
+        version: this.packageVersion(pkg.installedPath),
+      }))
+      return Promise.resolve({ packages, updateSources: [] })
+    } catch {
+      return Promise.resolve({ packages: [], updateSources: [] })
+    }
+  }
+
+  /** Installs a package source (npm:name or git:url) and persists it to settings.json. */
+  async installPackage(source: string): Promise<void> {
+    const manager = this.packageManager
+    if (!manager) throw new Error('No active session')
+    await manager.installAndPersist(source)
+  }
+
+  /** Updates one package (source) or all configured packages when source is undefined. */
+  async updatePackages(source?: string): Promise<void> {
+    const manager = this.packageManager
+    if (!manager) throw new Error('No active session')
+    await manager.update(source)
+  }
+
+  /** Uninstalls a package and removes it from settings.json. */
+  async removePackage(source: string): Promise<void> {
+    const manager = this.packageManager
+    if (!manager) throw new Error('No active session')
+    await manager.removeAndPersist(source)
+  }
+
+  /** Sources with newer versions available on the registry. */
+  async checkPackageUpdates(): Promise<string[]> {
+    const manager = this.packageManager
+    if (!manager) return Promise.resolve([])
+    try {
+      const updates = await manager.checkForAvailableUpdates()
+      return updates.map((update) => update.source)
+    } catch {
+      return Promise.resolve([])
+    }
   }
 
   /** Registers a submitted runtime API key as a redaction target (memory only). */
@@ -2437,6 +2513,7 @@ export class PiRuntime {
     this.unsubscribe?.(); this.unsubscribe = null
     const session = this.session
     this.session = null
+    this.packageManager = null
     this.clearLiveState()
     this.queueCount = 0
     // Session-scoped telemetry: a switched/closed session must not leak its

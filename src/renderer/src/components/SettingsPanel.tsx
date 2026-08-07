@@ -5,6 +5,7 @@ import type {
   CustomProviderApi,
   EngineStatus,
   ExtensionsInfo,
+  PackagesInfo,
   ProviderStatus,
   ProviderTypeInfo,
   SettingsPatch,
@@ -83,6 +84,10 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
+  /** Configured packages (pi package manager) for the Extensions section. */
+  const [packagesInfo, setPackagesInfo] = useState<PackagesInfo | null>(null)
+  const [packageInput, setPackageInput] = useState('')
+  const [packageBusy, setPackageBusy] = useState<null | 'install' | 'update' | 'remove' | 'check'>(null)
   /** Engine-management state (loaded engine + installed external versions). */
   const [engineStatus, setEngineStatus] = useState<EngineStatus | null>(null)
   /** Compatible versions fetched from the npm registry (null = not fetched). */
@@ -157,6 +162,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   // Loaded-extension inventory for the Extensions section.
   useEffect(() => {
     window.pi.getExtensions().then(setExtensionsInfo, () => setExtensionsInfo(null))
+  }, [])
+
+  // Configured packages for the Extensions section (pi package manager).
+  useEffect(() => {
+    window.pi.getPackages().then(setPackagesInfo, () => setPackagesInfo(null))
   }, [])
 
   // Engine status for the Engine section (active engine + installed versions).
@@ -290,6 +300,83 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setLive({ kind: 'error', text: errorMessage(e) })
     } finally {
       setEngineBusy(null)
+    }
+  }
+
+  const refreshPackages = async (): Promise<void> => {
+    const info = await window.pi.getPackages()
+    setPackagesInfo(info)
+  }
+
+  const installPackage = async (): Promise<void> => {
+    const source = packageInput.trim()
+    if (!/^(npm|git):[^\s"'`$&;|<>]+$/.test(source)) {
+      setLive({ kind: 'error', text: t('settings.packageSourceInvalid') })
+      return
+    }
+    if (packageBusy !== null) return
+    setPackageBusy('install')
+    try {
+      await window.pi.installPackage(source)
+      setLive({ kind: 'success', text: t('settings.packageInstalledOk', { source }) })
+      setPackageInput('')
+      const [packages, extensions] = await Promise.all([window.pi.getPackages(), window.pi.getExtensions()])
+      setPackagesInfo(packages)
+      setExtensionsInfo(extensions)
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setPackageBusy(null)
+    }
+  }
+
+  const updatePackage = async (source?: string): Promise<void> => {
+    if (packageBusy !== null) return
+    setPackageBusy('update')
+    try {
+      await window.pi.updatePackages(source)
+      const label = source ?? t('settings.packages')
+      setLive({ kind: 'success', text: t('settings.packageUpdatedOk', { source: label }) })
+      await refreshPackages()
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setPackageBusy(null)
+    }
+  }
+
+  const removePackage = async (source: string): Promise<void> => {
+    if (packageBusy !== null) return
+    if (!window.confirm(t('settings.packageRemoveConfirm', { source }))) return
+    setPackageBusy('remove')
+    try {
+      await window.pi.removePackage(source)
+      setLive({ kind: 'success', text: t('settings.packageRemovedOk', { source }) })
+      const [packages, extensions] = await Promise.all([window.pi.getPackages(), window.pi.getExtensions()])
+      setPackagesInfo(packages)
+      setExtensionsInfo(extensions)
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setPackageBusy(null)
+    }
+  }
+
+  const checkPackageUpdates = async (): Promise<void> => {
+    if (packageBusy !== null) return
+    setPackageBusy('check')
+    try {
+      const updates = await window.pi.checkPackageUpdates()
+      if (updates.length === 0) {
+        setLive({ kind: 'success', text: t('settings.packageNoUpdates') })
+      } else {
+        setLive({ kind: 'info', text: t('settings.packageUpdatesFound', { n: updates.length }) })
+        setPackagesInfo((prev) => (prev ? { ...prev, updateSources: updates } : prev))
+      }
+    } catch (e) {
+      setLive({ kind: 'error', text: errorMessage(e) })
+    } finally {
+      setPackageBusy(null)
     }
   }
 
@@ -836,6 +923,83 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       </div>
                     ) : null}
                   </div>
+                )}
+
+                <p className="sett-hint">{t('settings.packages')}</p>
+                <p className="sett-hint">{t('settings.packagesHint')}</p>
+                {packagesInfo === null ? (
+                  <div className="sett-state sett-state-inline">
+                    <LoaderCircle size={16} className="sett-spin" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <>
+                    {packagesInfo.packages.length === 0 ? (
+                      <p className="sett-hint">{t('settings.packageNone')}</p>
+                    ) : (
+                      <div className="sett-extension-list">
+                        {packagesInfo.packages.map((pkg) => {
+                          const updatable = packagesInfo.updateSources.includes(pkg.source)
+                          return (
+                            <div className="sett-extension" key={pkg.source}>
+                              <div className="sett-extension-main">
+                                <span className="sett-extension-name">{pkg.displayName}</span>
+                                <span className="sett-extension-source">
+                                  {pkg.type} · {pkg.scope}
+                                  {updatable ? ` · ${t('settings.packageUpdated')}` : ''}
+                                </span>
+                              </div>
+                              <span className="sett-extension-meta">
+                                <span>{pkg.version ?? t('settings.packageVersionUnknown')}</span>
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  disabled={packageBusy !== null}
+                                  onClick={() => void updatePackage(pkg.source)}
+                                >
+                                  {t('settings.packageUpdate')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-danger"
+                                  disabled={packageBusy !== null}
+                                  onClick={() => void removePackage(pkg.source)}
+                                >
+                                  {t('settings.packageRemove')}
+                                </button>
+                              </span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    <div className="sett-engine-install">
+                      <input
+                        type="text"
+                        className="input"
+                        value={packageInput}
+                        onChange={(e) => setPackageInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') void installPackage() }}
+                        placeholder={t('settings.packageInstallPh')}
+                        aria-label={t('settings.packageInstallPh')}
+                      />
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={packageBusy !== null}
+                        onClick={() => void installPackage()}
+                      >
+                        {packageBusy === 'install' ? t('settings.packageInstalling') : t('settings.packageInstall')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={packageBusy !== null}
+                        onClick={() => void checkPackageUpdates()}
+                      >
+                        {packageBusy === 'check' ? t('settings.packageChecking') : t('settings.packageCheck')}
+                      </button>
+                    </div>
+                  </>
                 )}
               </section>
 

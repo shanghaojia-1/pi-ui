@@ -75,6 +75,11 @@ const api = {
   activateEngine: vi.fn(),
   uninstallEngine: vi.fn(),
   deactivateEngine: vi.fn(),
+  getPackages: vi.fn().mockResolvedValue({ packages: [], updateSources: [] }),
+  installPackage: vi.fn(),
+  updatePackages: vi.fn(),
+  removePackage: vi.fn(),
+  checkPackageUpdates: vi.fn().mockResolvedValue([]),
 } as unknown as Window['pi']
 
 let onClose: ReturnType<typeof vi.fn>

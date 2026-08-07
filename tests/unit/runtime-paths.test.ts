@@ -36,6 +36,7 @@ vi.mock('../../src/main/engine-loader', () => ({
     getAgentDir: mocks.getAgentDir,
     ModelRuntime: mocks.ModelRuntime,
     SessionManager: mocks.SessionManager,
+    DefaultPackageManager: class DefaultPackageManager {},
   }),
 }))
 

@@ -1,8 +1,9 @@
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { delimiter } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isImageAttachments, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
+import { IPC, isApiKey, isCustomProviderConfig, isEngineVersion, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type ImageAttachment, type SettingsSnapshot } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
-import { activateEngineVersion, deactivateEngine, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
+import { activateEngineVersion, deactivateEngine, findNpm, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
 import { PiRuntime } from './runtime'
 import { windowOptionsForPlatform } from './window-options'
@@ -92,6 +93,15 @@ app.whenReady().then(async () => {
   // Load the pi engine (external version if activated, builtin otherwise) BEFORE
   // the runtime starts; every runtime call reads this cached engine API.
   await loadEngineApi()
+  // Finder-launched GUI apps inherit a minimal PATH; make node/npm reachable
+  // for the SDK's own npm invocations (package install/update) too.
+  try {
+    const npm = findNpm()
+    if (npm && process.platform !== 'win32') {
+      const binDir = dirname(npm.command)
+      process.env.PATH = `${binDir}${delimiter}${process.env.PATH ?? ''}`
+    }
+  } catch { /* PATH injection is best-effort */ }
   mainWindow = createWindow()
   // Tool-approval policy: create and load the persisted store BEFORE the
   // runtime starts so the first tool_call already sees the persisted mode.
@@ -186,6 +196,20 @@ ipcMain.handle(IPC.engineUninstall, (_event, version: unknown) => {
   uninstallEngineVersion(version)
 })
 ipcMain.handle(IPC.engineDeactivate, () => { deactivateEngine() })
+ipcMain.handle(IPC.packages, () => runtime.listPackages())
+ipcMain.handle(IPC.packageInstall, (_event, source: unknown) => {
+  if (!isPackageSource(source)) throw new Error('Invalid package source')
+  return runtime.installPackage(source)
+})
+ipcMain.handle(IPC.packageUpdate, (_event, source: unknown) => {
+  if (source !== undefined && source !== null && !isPackageSource(source)) throw new Error('Invalid package source')
+  return runtime.updatePackages(source === null ? undefined : source)
+})
+ipcMain.handle(IPC.packageRemove, (_event, source: unknown) => {
+  if (!isPackageSource(source)) throw new Error('Invalid package source')
+  return runtime.removePackage(source)
+})
+ipcMain.handle(IPC.packageCheck, () => runtime.checkPackageUpdates())
 ipcMain.handle(IPC.customProvider, (_event, config: unknown) => {
   if (!isCustomProviderConfig(config)) throw new Error('Invalid custom provider config')
   return runtime.addCustomProvider(config)

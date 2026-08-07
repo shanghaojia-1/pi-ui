@@ -9,11 +9,11 @@ const PROJECT_ROOT = resolve(HERE, '../..')
 const SCREENSHOTS = join(PROJECT_ROOT, 'artifacts', 'screenshots')
 
 const API_METHODS = [
-  'abort', 'activateEngine', 'addCustomProvider', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deactivateEngine', 'deleteSession',
-  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getEngineStatus', 'getEngineVersions', 'getExtensions', 'getProviderConfig', 'getProviderTypes', 'getSessionStats', 'getSettings',
-  'getSnapshot', 'installEngine', 'logoutProvider', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
-  'refreshModels', 'reloadSession', 'renameSession', 'saveProviderKey', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
-  'setThinking', 'setToolApprovalMode', 'testProviderConnection', 'uninstallEngine', 'updateSettings', 'quitApp',
+  'abort', 'activateEngine', 'addCustomProvider', 'checkPackageUpdates', 'chooseWorkspace', 'compactSession', 'copyLastMessage', 'deactivateEngine', 'deleteSession',
+  'exportSession', 'getAppInfo', 'getDynamicCommands', 'getEngineStatus', 'getEngineVersions', 'getExtensions', 'getPackages', 'getProviderConfig', 'getProviderTypes', 'getSessionStats', 'getSettings',
+  'getSnapshot', 'installEngine', 'installPackage', 'logoutProvider', 'newSession', 'onSnapshot', 'openSession', 'openWorkspace',
+  'refreshModels', 'reloadSession', 'removePackage', 'renameSession', 'saveProviderKey', 'sendPrompt', 'setModel', 'setRuntimeApiKey',
+  'setThinking', 'setToolApprovalMode', 'testProviderConnection', 'uninstallEngine', 'updatePackages', 'updateSettings', 'quitApp',
 ].sort()
 
 test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {

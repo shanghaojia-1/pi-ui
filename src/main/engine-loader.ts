@@ -259,7 +259,7 @@ interface ResolvedNpm {
  * `node` and the probe fails even though npm exists. On Windows npm is a
  * .cmd shim and must run through the shell.
  */
-function findNpm(): ResolvedNpm | null {
+export function findNpm(): ResolvedNpm | null {
   const candidates: string[] = []
   const probe = (command: string, extraBinDir?: string): boolean => {
     try {
