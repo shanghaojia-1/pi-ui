@@ -65,6 +65,9 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', (event) => event.preventDefault())
+  // Frameless win32: keep the renderer's maximize/restore glyph in sync.
+  window.on('maximize', () => window.webContents.send(IPC.windowMaximizedChanged, true))
+  window.on('unmaximize', () => window.webContents.send(IPC.windowMaximizedChanged, false))
   registerContextMenu(window.webContents)
   runtime.setWindow(window)
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -178,6 +181,15 @@ app.whenReady().then(async () => {
 ipcMain.handle(IPC.snapshot, () => runtime.snapshot())
 ipcMain.handle(IPC.chooseWorkspace, () => runtime.chooseWorkspace())
 ipcMain.handle(IPC.openWorkspace, (_event, path: unknown) => runtime.openWorkspace(textArg(path, 'workspace')))
+ipcMain.handle(IPC.windowMinimize, () => { mainWindow?.minimize() })
+ipcMain.handle(IPC.windowMaximizeToggle, () => {
+  const window = mainWindow
+  if (!window) return
+  if (window.isMaximized()) window.unmaximize()
+  else window.maximize()
+})
+ipcMain.handle(IPC.windowClose, () => { mainWindow?.close() })
+ipcMain.handle(IPC.windowMaximized, () => mainWindow?.isMaximized() ?? false)
 ipcMain.handle(IPC.newSession, () => runtime.newSession())
 ipcMain.handle(IPC.openSession, (_event, path: unknown) => runtime.openSession(textArg(path, 'session')))
 ipcMain.handle(IPC.deleteSession, (_event, path: unknown) => runtime.deleteSession(textArg(path, 'session')))

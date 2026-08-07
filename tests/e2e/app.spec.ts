@@ -16,6 +16,7 @@ const API_METHODS = [
   'cancelSubagent',
   'checkPackageUpdates',
   'chooseWorkspace',
+  'closeWindow',
   'compactSession',
   'copyLastMessage',
   'createSessionGroup',
@@ -25,6 +26,8 @@ const API_METHODS = [
   'deleteSubagent',
   'exportSession',
   'getAppInfo',
+  'getDingtalkConfig',
+  'getDingtalkStatus',
   'getDynamicCommands',
   'getEngineStatus',
   'getEngineVersions',
@@ -35,12 +38,16 @@ const API_METHODS = [
   'getSessionStats',
   'getSettings',
   'getSnapshot',
+  'getWindowMaximized',
   'installEngine',
   'installPackage',
   'listSubagents',
   'logoutProvider',
+  'minimizeWindow',
   'moveSessionToGroup',
   'newSession',
+  'onDingtalkStatus',
+  'onMaximizedChange',
   'onSnapshot',
   'openSession',
   'openWorkspace',
@@ -51,6 +58,7 @@ const API_METHODS = [
   'removePackage',
   'renameSession',
   'renameSessionGroup',
+  'saveDingtalkConfig',
   'saveProviderKey',
   'saveSubagent',
   'sendPrompt',
@@ -58,7 +66,10 @@ const API_METHODS = [
   'setRuntimeApiKey',
   'setThinking',
   'setToolApprovalMode',
+  'startDingtalk',
+  'stopDingtalk',
   'testProviderConnection',
+  'toggleMaximizeWindow',
   'uninstallEngine',
   'updatePackages',
   'updateSettings',
@@ -563,7 +574,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await chip.click()
     await expect(page.getByRole('dialog', { name: '关于' })).toBeVisible()
     await expect(page.getByRole('dialog', { name: '关于' }).getByText(`v${info.version}`, { exact: true })).toBeVisible()
-    await page.getByRole('button', { name: '关闭' }).click()
+    await page.getByRole('dialog', { name: '关于' }).getByRole('button', { name: '关闭', exact: true }).click()
     await expect(page.getByRole('dialog', { name: '关于' })).not.toBeVisible()
     expect(pageErrors).toEqual([])
   })

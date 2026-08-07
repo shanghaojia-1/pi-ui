@@ -501,6 +501,13 @@ export interface PiDesktopApi {
   getSnapshot(): Promise<AppSnapshot>
   chooseWorkspace(): Promise<AppSnapshot>
   openWorkspace(path: string): Promise<AppSnapshot>
+  /** Frameless-window controls (win32 custom title bar). */
+  minimizeWindow(): Promise<void>
+  toggleMaximizeWindow(): Promise<void>
+  closeWindow(): Promise<void>
+  getWindowMaximized(): Promise<boolean>
+  /** Subscribe to maximize/unmaximize changes; returns the unsubscribe fn. */
+  onMaximizedChange(listener: (maximized: boolean) => void): () => void
   newSession(): Promise<AppSnapshot>
   openSession(path: string): Promise<AppSnapshot>
   deleteSession(path: string): Promise<AppSnapshot>
@@ -582,6 +589,8 @@ export interface PiDesktopApi {
 export const IPC = {
   snapshot: 'pi:snapshot', chooseWorkspace: 'pi:choose-workspace', openWorkspace: 'pi:open-workspace',
   newSession: 'pi:new-session', openSession: 'pi:open-session', deleteSession: 'pi:delete-session', prompt: 'pi:prompt', abort: 'pi:abort', cancelSubagent: 'pi:cancel-subagent',
+  windowMinimize: 'pi:window-minimize', windowMaximizeToggle: 'pi:window-maximize-toggle', windowClose: 'pi:window-close',
+  windowMaximized: 'pi:window-maximized', windowMaximizedChanged: 'pi:window-maximized-changed',
   model: 'pi:model', thinking: 'pi:thinking', settings: 'pi:settings', updateSettings: 'pi:update-settings',
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',

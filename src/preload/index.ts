@@ -34,6 +34,15 @@ const api: PiDesktopApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.snapshot),
   chooseWorkspace: () => ipcRenderer.invoke(IPC.chooseWorkspace),
   openWorkspace: (path: string) => ipcRenderer.invoke(IPC.openWorkspace, path),
+  minimizeWindow: () => ipcRenderer.invoke(IPC.windowMinimize),
+  toggleMaximizeWindow: () => ipcRenderer.invoke(IPC.windowMaximizeToggle),
+  closeWindow: () => ipcRenderer.invoke(IPC.windowClose),
+  getWindowMaximized: () => ipcRenderer.invoke(IPC.windowMaximized),
+  onMaximizedChange: (listener: (maximized: boolean) => void) => {
+    const wrapped = (_event: unknown, maximized: boolean): void => listener(maximized)
+    ipcRenderer.on(IPC.windowMaximizedChanged, wrapped)
+    return () => ipcRenderer.removeListener(IPC.windowMaximizedChanged, wrapped)
+  },
   newSession: () => ipcRenderer.invoke(IPC.newSession),
   openSession: (path: string) => ipcRenderer.invoke(IPC.openSession, path),
   deleteSession: (path: string) => ipcRenderer.invoke(IPC.deleteSession, path),

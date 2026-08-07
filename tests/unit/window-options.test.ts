@@ -6,7 +6,7 @@ const BASE = {
   title: 'Pi Studio', backgroundColor: '#f5f5f3',
 }
 
-/** Win/linux/other share the native default-frame appearance. */
+/** Linux/other share the native default-frame appearance. */
 function expectDefaultFrame(options: ReturnType<typeof windowOptionsForPlatform>): void {
   expect(options.titleBarStyle).toBe('default')
   expect(options.frame).toBe(true)
@@ -29,8 +29,14 @@ describe('windowOptionsForPlatform', () => {
     expect('titleBarOverlay' in options).toBe(false)
   })
 
-  it('win32: default frame + movable + auto-hide menu bar, no traffic lights / overlay', () => {
-    expectDefaultFrame(windowOptionsForPlatform('win32'))
+  it('win32: frameless custom title bar (theme-following renderer controls)', () => {
+    const options = windowOptionsForPlatform('win32')
+    expect(options).toMatchObject(BASE)
+    expect(options.frame).toBe(false)
+    expect(options.movable).toBe(true)
+    expect(options.titleBarStyle).toBeUndefined() // renderer draws the bar
+    expect('trafficLightPosition' in options).toBe(false)
+    expect('titleBarOverlay' in options).toBe(false)
   })
 
   it('linux: default frame + movable + auto-hide menu bar, no traffic lights / overlay', () => {
@@ -53,9 +59,8 @@ describe('windowOptionsForPlatform', () => {
   })
 
   it('covers every platform BrowserWindow actually supports', () => {
-    for (const platform of ['darwin', 'win32', 'linux']) {
-      const options = windowOptionsForPlatform(platform)
-      expect(options.titleBarStyle === 'hiddenInset' || options.titleBarStyle === 'default').toBe(true)
-    }
+    expect(windowOptionsForPlatform('darwin').titleBarStyle).toBe('hiddenInset')
+    expect(windowOptionsForPlatform('win32').frame).toBe(false)
+    expect(windowOptionsForPlatform('linux').titleBarStyle).toBe('default')
   })
 })

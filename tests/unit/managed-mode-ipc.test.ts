@@ -22,6 +22,12 @@ const mocks = vi.hoisted(() => {
   class FakeBrowserWindow {
     webContents = new FakeWebContents()
     isDestroyed = (): boolean => false
+    on = vi.fn()
+    isMaximized = vi.fn(() => false)
+    minimize = vi.fn()
+    maximize = vi.fn()
+    unmaximize = vi.fn()
+    close = vi.fn()
     // createWindow loads the renderer on the BrowserWindow (real Electron API).
     loadURL = vi.fn().mockResolvedValue(undefined)
     loadFile = vi.fn().mockResolvedValue(undefined)

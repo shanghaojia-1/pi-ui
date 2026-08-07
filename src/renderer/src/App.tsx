@@ -12,11 +12,13 @@ import Composer, { type ComposerHandle } from './components/Composer'
 import RightPanel from './components/RightPanel'
 import SettingsPanel from './components/SettingsPanel'
 import TelemetryBar from './components/TelemetryBar'
+import WindowBar from './components/WindowBar'
 import { getThemeDefinition, useTheme } from './lib/theme'
 
 // Host platform comes from the preload contract (never sniffed from userAgent).
 const platform = window.desktop?.platform ?? 'other'
 const isMac = platform === 'darwin'
+const isWin = platform === 'win32'
 
 export default function App({ initialEngineStatus }: { initialEngineStatus?: EngineStatus } = {}) {
   const { t } = useI18n()
@@ -317,7 +319,9 @@ export default function App({ initialEngineStatus }: { initialEngineStatus?: Eng
 
   if (engineStatus === null || snapshot === null) {
     return (
-      <div className={`splash${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
+      <div className={`splash-shell${isWin ? ' platform-win' : ''}${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
+        {isWin ? <WindowBar title="Pi Studio" /> : null}
+        <div className={`splash${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
         <div className="splash-glow splash-glow-one" aria-hidden="true" />
         <div className="splash-glow splash-glow-two" aria-hidden="true" />
         <div className="splash-panel">
@@ -344,6 +348,7 @@ export default function App({ initialEngineStatus }: { initialEngineStatus?: Eng
           )}
         </div>
         <div className="splash-footer">{splashTheme.quote ?? t('app.splash.footer')}</div>
+        </div>
       </div>
     )
   }
@@ -460,7 +465,9 @@ export default function App({ initialEngineStatus }: { initialEngineStatus?: Eng
   } as CSSProperties
 
   return (
-    <div className={`app${isMac ? ' platform-darwin' : ''}`} data-platform={platform} style={appStyle}>
+    <div className={`app-shell${isWin ? ' platform-win' : ''}${isMac ? ' platform-darwin' : ''}`} data-platform={platform}>
+      {isWin ? <WindowBar title={workspace ? workspace.name : 'Pi Studio'} /> : null}
+      <div className={`app${isMac ? ' platform-darwin' : ''}`} data-platform={platform} style={appStyle}>
       <div className="app-col app-col-left">
         {isMac ? <div className="drag-strip" aria-hidden="true" /> : null}
         <Sidebar
@@ -669,6 +676,7 @@ export default function App({ initialEngineStatus }: { initialEngineStatus?: Eng
           initialSection={settingsSection}
         />
       ) : null}
+      </div>
     </div>
   )
 }

@@ -66,6 +66,33 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const [groupBusy, setGroupBusy] = useState<string | null>(null)
   /** Visible error from group create / dir pick IPC (surfaces main-side failures). */
   const [groupError, setGroupError] = useState<string | null>(null)
+  /** New-task split-button dropdown open state. */
+  const [newTaskMenu, setNewTaskMenu] = useState(false)
+  const newTaskMenuRef = useRef<HTMLDivElement>(null)
+
+  // Close the new-task dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!newTaskMenu) return
+    const onPointerDown = (e: PointerEvent): void => {
+      if (newTaskMenuRef.current && !newTaskMenuRef.current.contains(e.target as Node)) setNewTaskMenu(false)
+    }
+    const onKeyDown = (e: KeyboardEvent): void => { if (e.key === 'Escape') setNewTaskMenu(false) }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [newTaskMenu])
+
+  /** New task pinned OUT of every group (ungrouped), regardless of cwd matching. */
+  const newUngroupedTask = async (): Promise<void> => {
+    setNewTaskMenu(false)
+    const snap = await window.pi.newSession()
+    if (snap.activeSessionPath !== null) {
+      await window.pi.moveSessionToGroup(snap.activeSessionPath, null)
+    }
+  }
 
   const toggle = (key: string): void => {
     setCollapsed((prev) => {
@@ -246,6 +273,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
     const items = buckets.get(group.id) ?? []
     const open = !collapsed[group.id]
     const renamingThis = renaming === group.id
+    const dirCount = group.dirs.length
     return (
       <div
         key={group.id}
@@ -255,33 +283,39 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
         onDrop={(e) => void onDrop(e, group.id)}
       >
         <div
-          className="session-group-head"
+          className={`session-group-head${open ? ' session-group-head-open' : ''}`}
           role="button"
           tabIndex={0}
           aria-expanded={open}
           onClick={() => toggle(group.id)}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(group.id) } }}
         >
-          {open ? <ChevronDown size={12} className="session-group-chevron" aria-hidden="true" /> : <ChevronRight size={12} className="session-group-chevron" aria-hidden="true" />}
-          <Folder size={12} className="session-group-icon" aria-hidden="true" />
-          {renamingThis ? (
-            <input
-              className="session-group-rename"
-              value={renameValue}
-              autoFocus
-              onClick={(e) => e.stopPropagation()}
-              onFocus={(e) => e.target.select()}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void submitRename(group.id)
-                if (e.key === 'Escape') setRenaming(null)
-              }}
-              onBlur={() => void submitRename(group.id)}
-            />
-          ) : (
-            <span className="session-group-name" title={group.dirs.map((d) => d).join('\n')}>{group.name}</span>
-          )}
-          <span className="session-group-count">{items.length}</span>
+          {open ? <ChevronDown size={13} className="session-group-chevron" aria-hidden="true" /> : <ChevronRight size={13} className="session-group-chevron" aria-hidden="true" />}
+          <span className="session-group-icon" aria-hidden="true">
+            <Folder size={15} />
+          </span>
+          <span className="session-group-text">
+            {renamingThis ? (
+              <input
+                className="session-group-rename"
+                value={renameValue}
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitRename(group.id)
+                  if (e.key === 'Escape') setRenaming(null)
+                }}
+                onBlur={() => void submitRename(group.id)}
+              />
+            ) : (
+              <span className="session-group-name" title={group.dirs.map((d) => d).join('\n')}>{group.name}</span>
+            )}
+            <span className="session-group-sub">
+              {t('sidebar.groupMeta', { sessions: items.length, dirs: dirCount })}
+            </span>
+          </span>
           <span className="session-group-actions">
             <button
               type="button"
@@ -294,7 +328,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
                 void newTaskInGroup(group)
               }}
             >
-              <Plus size={11} aria-hidden="true" />
+              <Plus size={13} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -307,7 +341,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
                 setRenameValue(group.name)
               }}
             >
-              <Pencil size={11} aria-hidden="true" />
+              <Pencil size={13} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -319,7 +353,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
                 void window.pi.deleteSessionGroup(group.id)
               }}
             >
-              <Trash2 size={11} aria-hidden="true" />
+              <Trash2 size={13} aria-hidden="true" />
             </button>
           </span>
         </div>
@@ -350,16 +384,51 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
           <span>{t('sidebar.openDir')}</span>
           <kbd>{shortcut('⇧⌘O', 'Ctrl+Shift+O')}</kbd>
         </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={onNewSession}
-          disabled={!workspace || busy}
-        >
-          <Plus size={14} aria-hidden="true" />
-          <span>{t('sidebar.newTask')}</span>
-          <kbd>{shortcut('⌘N', 'Ctrl+N')}</kbd>
-        </button>
+        <div className="sidebar-newtask" ref={newTaskMenuRef}>
+          <button
+            type="button"
+            className="btn btn-primary sidebar-newtask-main"
+            onClick={onNewSession}
+            disabled={!workspace || busy}
+          >
+            <Plus size={14} aria-hidden="true" />
+            <span>{t('sidebar.newTask')}</span>
+            <kbd>{shortcut('⌘N', 'Ctrl+N')}</kbd>
+          </button>
+          <button
+            type="button"
+            className="sidebar-newtask-caret"
+            aria-label={t('sidebar.newTaskMenu')}
+            title={t('sidebar.newTaskMenu')}
+            disabled={!workspace || busy}
+            onClick={() => setNewTaskMenu((v) => !v)}
+          >
+            <ChevronDown size={12} aria-hidden="true" />
+          </button>
+          {newTaskMenu ? (
+            <div className="newtask-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setNewTaskMenu(false)
+                  onNewSession()
+                }}
+              >
+                <Plus size={12} aria-hidden="true" />
+                <span>{t('sidebar.newTask')}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void newUngroupedTask()}
+              >
+                <Plus size={12} aria-hidden="true" />
+                <span>{t('sidebar.newTaskHere')}</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="sidebar-sessions" aria-label={t('sidebar.sessionsLabel')}>
@@ -407,44 +476,6 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
           )
         ) : (
           <>
-            {groups.length === 0 && ungrouped.length === 0 && !creating ? (
-              <div className="sidebar-empty">
-                {workspace ? (
-                  <>
-                    <MessageSquare size={22} className="sidebar-empty-icon" aria-hidden="true" />
-                    <p>{t('sidebar.noSessions')}</p>
-                    <button type="button" className="btn btn-primary" onClick={onNewSession} disabled={busy}>
-                      <Plus size={14} aria-hidden="true" />
-                      <span>{t('sidebar.startFirst')}</span>
-                    </button>
-                    <span className="sidebar-empty-hint">{t('sidebar.startFirstHint', { kbd: shortcut('⌘N', 'Ctrl+N') })}</span>
-                  </>
-                ) : (
-                  <p>{t('sidebar.openDirHint')}</p>
-                )}
-              </div>
-            ) : null}
-            {groups.map(renderGroup)}
-
-        {/* Ungrouped sessions live flat OUTSIDE every group: no collapsible
-            header — a plain drop zone under the groups (Codex-style). */}
-        {groups.length > 0 || ungrouped.length > 0 || creating ? (
-          <div
-            key={UNGROUPED_KEY}
-            className={`session-ungrouped${dragOver === UNGROUPED_KEY ? ' session-group-dragover' : ''}`}
-            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOver(UNGROUPED_KEY) }}
-            onDragLeave={() => setDragOver((cur) => (cur === UNGROUPED_KEY ? null : cur))}
-            onDrop={(e) => void onDrop(e, null)}
-          >
-            {workspace ? (
-              <button type="button" className="session-ungrouped-new" onClick={onNewSession} disabled={busy}>
-                <Plus size={11} aria-hidden="true" />
-                <span>{t('sidebar.newTaskHere')}</span>
-              </button>
-            ) : null}
-            {ungrouped.map(renderSession)}
-          </div>
-        ) : null}
         {creating ? (
           <div className="group-form">
             <div className="group-form-row">
@@ -493,12 +524,41 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
               </button>
             </div>
           </div>
-        ) : (
-          <button type="button" className="session-group-add" onClick={startCreate} disabled={!workspace}>
-            <Plus size={12} aria-hidden="true" />
-            <span>{t('sidebar.newGroup')}</span>
-          </button>
-        )}
+        ) : null}
+
+        {groups.length === 0 && ungrouped.length === 0 && !creating ? (
+          <div className="sidebar-empty">
+            {workspace ? (
+              <>
+                <MessageSquare size={22} className="sidebar-empty-icon" aria-hidden="true" />
+                <p>{t('sidebar.noSessions')}</p>
+                <button type="button" className="btn btn-primary" onClick={onNewSession} disabled={busy}>
+                  <Plus size={14} aria-hidden="true" />
+                  <span>{t('sidebar.startFirst')}</span>
+                </button>
+                <span className="sidebar-empty-hint">{t('sidebar.startFirstHint', { kbd: shortcut('⌘N', 'Ctrl+N') })}</span>
+              </>
+            ) : (
+              <p>{t('sidebar.openDirHint')}</p>
+            )}
+          </div>
+        ) : null}
+
+        {groups.map(renderGroup)}
+
+        {/* Ungrouped sessions live flat OUTSIDE every group: no collapsible
+            header — a plain drop zone under the groups (Codex-style). */}
+        {ungrouped.length > 0 ? (
+          <div
+            key={UNGROUPED_KEY}
+            className={`session-ungrouped${dragOver === UNGROUPED_KEY ? ' session-group-dragover' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOver(UNGROUPED_KEY) }}
+            onDragLeave={() => setDragOver((cur) => (cur === UNGROUPED_KEY ? null : cur))}
+            onDrop={(e) => void onDrop(e, null)}
+          >
+            {ungrouped.map(renderSession)}
+          </div>
+        ) : null}
           </>
         )}
       </div>

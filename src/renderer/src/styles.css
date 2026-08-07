@@ -101,6 +101,73 @@ button {
 
 /* ============ layout ============ */
 
+/* Frameless win32 shell: theme-following title bar above the app/splash.
+   macOS keeps its per-column drag strips; linux/other keep the native frame
+   (no shell wrapper impact: .app fills the shell either way). */
+.app-shell,
+.splash-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+.app-shell > .app,
+.splash-shell > .splash {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+/* ---- win32 title bar ---- */
+.window-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  box-sizing: border-box;
+  padding-left: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.window-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.window-bar-controls {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+}
+.window-bar-btn {
+  width: 46px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.window-bar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.window-bar-close:hover {
+  background: var(--red);
+  color: #fff;
+}
+
 .app {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--right-w);
@@ -824,49 +891,69 @@ li[aria-selected='true'] > .select-item {
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
 }
-/* Codex-style group header: a compact card row with chevron + icon + name. */
+/* Codex-style group header: a tall project row — 32px icon tile, two-line
+   text (name + meta), hover-revealed actions, 1px row separator. */
 .session-group-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 2px 0 1px;
-  padding: 5px 8px;
-  border-radius: var(--radius);
-  font-size: 11.5px;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text-2);
+  color: var(--text);
   cursor: pointer;
   user-select: none;
+  transition: background 0.1s;
+}
+.session-group:last-of-type .session-group-head {
+  border-bottom-color: transparent;
 }
 .session-group-head:hover {
   background: var(--bg-hover);
-  color: var(--text);
 }
 .session-group-chevron {
   flex: none;
+  width: 14px;
   color: var(--text-3);
-  transition: transform 0.12s;
+  opacity: 0;
+  transition: opacity 0.1s, transform 0.12s;
+}
+.session-group-head:hover .session-group-chevron,
+.session-group-head-open .session-group-chevron {
+  opacity: 1;
 }
 .session-group-icon {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--bg-subtle);
   color: var(--accent);
 }
-.session-group-name {
+.session-group-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.session-group-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.session-group-count {
-  flex: none;
-  font-size: 10px;
-  font-weight: 500;
+.session-group-sub {
+  font-size: 10.5px;
+  font-weight: 400;
   color: var(--text-3);
-  background: var(--bg-subtle);
-  border-radius: 9px;
-  padding: 0 6px;
-  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .session-group-actions {
   display: none;
@@ -878,8 +965,8 @@ li[aria-selected='true'] > .select-item {
   display: inline-flex;
 }
 .session-group-btn {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   color: var(--text-3);
 }
 .session-group-btn:hover {
@@ -897,13 +984,13 @@ li[aria-selected='true'] > .select-item {
   background: var(--bg-elevated);
   color: var(--text);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 13px;
   padding: 1px 4px;
 }
 .session-group-items {
   display: flex;
   flex-direction: column;
-  padding: 0 0 4px;
+  padding: 4px 0;
 }
 /* Ungrouped sessions: flat list below the groups — no header, no collapse.
    The whole strip is a drop target that pins sessions OUT of every group. */
@@ -913,17 +1000,89 @@ li[aria-selected='true'] > .select-item {
   border-top: 1px solid var(--border);
   margin-top: 6px;
   padding-top: 6px;
-  min-height: 28px;
   border-radius: var(--radius);
   transition: background 0.1s;
 }
+/* New-task split button: main action + caret dropdown (ungrouped option). */
+.sidebar-newtask {
+  position: relative;
+  display: flex;
+  width: 100%;
+}
+.sidebar-newtask-main {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.sidebar-newtask-caret {
+  flex: none;
+  width: 28px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-left: 0;
+  border-top-right-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sidebar-newtask-caret:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+.sidebar-newtask-caret:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.newtask-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+.newtask-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.newtask-menu button:hover {
+  background: var(--bg-hover);
+}
+.newtask-menu button svg {
+  color: var(--accent);
+  flex: none;
+}
+
+/* Group toolbar above the list: create-group button. */
 .session-group-add {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   width: 100%;
-  margin-top: 2px;
-  padding: 6px 8px;
+  margin-bottom: 4px;
+  padding: 5px 8px;
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   background: transparent;
@@ -937,26 +1096,6 @@ li[aria-selected='true'] > .select-item {
   background: var(--accent-soft);
 }
 .session-group-add:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.session-ungrouped-new {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
-  color: var(--text-3);
-  font-size: 11px;
-  cursor: pointer;
-  border-radius: var(--radius);
-}
-.session-ungrouped-new:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--accent);
-}
-.session-ungrouped-new:disabled {
   opacity: 0.45;
   cursor: default;
 }
