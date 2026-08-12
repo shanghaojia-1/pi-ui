@@ -16,7 +16,7 @@ import { getEngineApi, getEnginePackagePath } from './engine-loader'
 import type {
   AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionGroup, SessionGroupsConfig, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
-  SubagentConfig, SubagentEdit,
+  SkillInfo, SkillsInfo, SubagentConfig, SubagentEdit,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
 import { canonicalizeEvenIfMissing } from './paths'
@@ -545,6 +545,23 @@ export class PiRuntime {
     }).then(() => this.snapshot())
   }
 
+  updateSessionGroup(id: string, name: string, dirs: string[]): Promise<AppSnapshot> {
+    return this.enqueue(async () => {
+      try {
+        if (!this.sessionGroups.groups.some((group) => group.id === id)) throw new Error('Unknown session group')
+        const canonical = [...new Set(dirs.map((dir) => canonicalizeEvenIfMissing(dir)))]
+        this.sessionGroups = {
+          ...this.sessionGroups,
+          groups: this.sessionGroups.groups.map((group) => (
+            group.id === id ? { ...group, name: name.trim(), dirs: canonical } : group
+          )),
+        }
+        saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        await this.refreshSessions()
+      } catch (error) { this.recordError('Failed to update session group', error) }
+    }).then(() => this.snapshot())
+  }
+
   renameSessionGroup(id: string, name: string): Promise<AppSnapshot> {
     return this.enqueue(async () => {
       try {
@@ -856,11 +873,32 @@ export class PiRuntime {
     if (abortFailure) throw abortFailure.error
   }
 
-  newSession(): Promise<AppSnapshot> {
+  newSession(groupId?: string | null): Promise<AppSnapshot> {
     return this.enqueue(async () => {
       try {
         if (!this.workspace) throw new Error('Choose a workspace first')
+        if (groupId !== undefined && groupId !== null && !this.sessionGroups.groups.some((group) => group.id === groupId)) {
+          throw new Error('Unknown session group')
+        }
         await this.createSession(getEngineApi().SessionManager.create(this.workspace.path))
+        // Empty sessions receive a trusted SDK path before their JSONL exists.
+        // Pin that internal path directly as part of this queued mutation; the
+        // public move API intentionally keeps its strict on-disk file checks.
+        if (groupId !== undefined) {
+          const active = this.activePath()
+          if (active === null) throw new Error('New session has no path')
+          const canonical = canonicalizeEvenIfMissing(active)
+          const sessionsRoot = canonicalizeEvenIfMissing(join(getEngineApi().getAgentDir(), 'sessions'))
+          if (!this.isInside(canonical, sessionsRoot)) throw new Error('New session is outside the session store')
+          this.sessionGroups = {
+            ...this.sessionGroups,
+            members: {
+              ...this.sessionGroups.members,
+              [memberKey(canonical)]: groupId === null ? UNGROUPED : groupId,
+            },
+          }
+          saveSessionGroups(getEngineApi().getAgentDir(), this.sessionGroups)
+        }
         await this.refreshSessions()
       } catch (error) { this.recordError('Failed to create session', error) }
     }).then(() => this.snapshot())
@@ -1675,6 +1713,36 @@ export class PiRuntime {
       })
     } catch {
       return Promise.resolve({ extensions: [], errors: [] })
+    }
+  }
+
+  /** Loaded-skill inventory and loader diagnostics for the Settings skills section. */
+  getSkills(): Promise<SkillsInfo> {
+    const session = this.session
+    if (!session) return Promise.resolve({ skills: [], diagnostics: [] })
+    try {
+      const result = session.resourceLoader.getSkills()
+      const skills: SkillInfo[] = result.skills.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        filePath: skill.filePath,
+        baseDir: skill.baseDir,
+        sourceLabel: skill.sourceInfo.scope,
+        source: skill.sourceInfo.source,
+        origin: skill.sourceInfo.origin,
+        disableModelInvocation: skill.disableModelInvocation,
+      }))
+      skills.sort((a, b) => a.name.localeCompare(b.name))
+      return Promise.resolve({
+        skills,
+        diagnostics: result.diagnostics.map((diagnostic) => ({
+          type: diagnostic.type,
+          message: diagnostic.message,
+          path: diagnostic.path ?? diagnostic.collision?.loserPath ?? null,
+        })),
+      })
+    } catch {
+      return Promise.resolve({ skills: [], diagnostics: [] })
     }
   }
 

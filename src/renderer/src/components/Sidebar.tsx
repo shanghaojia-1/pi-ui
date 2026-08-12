@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Folder, FolderOpen, MessageSquare, Pencil, Plus, Search, Settings, Trash2, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder, FolderOpen, Inbox, MessageSquare, MoreHorizontal, Pencil, Plus, Search, Settings, Trash2, X } from 'lucide-react'
 import type { AppSnapshot, SessionGroup, SessionListItem } from '@shared/contracts'
 import { basename } from '../lib/path'
 import { formatTime } from '../lib/format'
@@ -51,13 +51,11 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const [searchQuery, setSearchQuery] = useState('')
   /** Group sections currently collapsed (persisted). */
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(loadCollapsed)
-  /** Inline group-creation form state; null = closed. */
+  /** Inline group form state: create or edit an existing group. */
   const [creating, setCreating] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<string | null>(null)
   const [groupName, setGroupName] = useState('')
   const [groupDirs, setGroupDirs] = useState<string[]>([])
-  /** Group id currently being renamed inline. */
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
   /** Drop-target highlight per group id (incl. the ungrouped drop zone). */
   const [dragOver, setDragOver] = useState<string | null>(null)
   /** Session path being dragged, for a drop ghost hint. */
@@ -69,6 +67,10 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   /** New-task split-button dropdown open state. */
   const [newTaskMenu, setNewTaskMenu] = useState(false)
   const newTaskMenuRef = useRef<HTMLDivElement>(null)
+  /** Compact actions menu for a group header. */
+  const [groupMenu, setGroupMenu] = useState<string | null>(null)
+  /** Group awaiting the second, confirming delete click. */
+  const [confirmingGroup, setConfirmingGroup] = useState<string | null>(null)
 
   // Close the new-task dropdown on outside click / Escape.
   useEffect(() => {
@@ -85,13 +87,35 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
     }
   }, [newTaskMenu])
 
+  // Group actions use one compact menu so long names do not jump or truncate
+  // when the pointer enters a narrow sidebar row.
+  useEffect(() => {
+    if (groupMenu === null) return
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target
+      if (!(target instanceof Element) || target.closest('[data-group-menu]') === null) {
+        setGroupMenu(null)
+        setConfirmingGroup(null)
+      }
+    }
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setGroupMenu(null)
+        setConfirmingGroup(null)
+      }
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [groupMenu])
+
   /** New task pinned OUT of every group (ungrouped), regardless of cwd matching. */
   const newUngroupedTask = async (): Promise<void> => {
     setNewTaskMenu(false)
-    const snap = await window.pi.newSession()
-    if (snap.activeSessionPath !== null) {
-      await window.pi.moveSessionToGroup(snap.activeSessionPath, null)
-    }
+    await window.pi.newSession(null)
   }
 
   const toggle = (key: string): void => {
@@ -119,7 +143,6 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
 
   const groups = snapshot?.groups ?? []
   const ungrouped = buckets.get(UNGROUPED_KEY) ?? []
-  const countOf = (id: string): number => buckets.get(id)?.length ?? 0
 
   /** Flat search results across all groups, newest first; null = search off. */
   const searchResults = useMemo(() => {
@@ -134,9 +157,24 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
 
   const startCreate = (): void => {
     setCreating(true)
+    setEditingGroup(null)
     setGroupError(null)
     setGroupName('')
     setGroupDirs(workspace ? [workspace.path] : [])
+  }
+
+  const startEdit = (group: SessionGroup): void => {
+    setCreating(false)
+    setEditingGroup(group.id)
+    setGroupError(null)
+    setGroupName(group.name)
+    setGroupDirs([...group.dirs])
+  }
+
+  const closeGroupForm = (): void => {
+    setCreating(false)
+    setEditingGroup(null)
+    setGroupError(null)
   }
 
   const addDir = async (): Promise<void> => {
@@ -149,22 +187,17 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
     }
   }
 
-  const submitCreate = async (): Promise<void> => {
+  const submitGroup = async (): Promise<void> => {
     const name = groupName.trim()
     if (name === '' || groupDirs.length === 0) return
     setGroupError(null)
     try {
-      await window.pi.createSessionGroup(name, groupDirs)
-      setCreating(false)
+      if (editingGroup === null) await window.pi.createSessionGroup(name, groupDirs)
+      else await window.pi.updateSessionGroup(editingGroup, name, groupDirs)
+      closeGroupForm()
     } catch (error) {
       setGroupError(error instanceof Error ? error.message : String(error))
     }
-  }
-
-  const submitRename = async (id: string): Promise<void> => {
-    const name = renameValue.trim()
-    if (name !== '') await window.pi.renameSessionGroup(id, name)
-    setRenaming(null)
   }
 
   /**
@@ -183,7 +216,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
       if (current === null || !group.dirs.some((d) => lower(d) === lower(current))) {
         await window.pi.openWorkspace(dir)
       }
-      await window.pi.newSession()
+      await window.pi.newSession(group.id)
     } finally {
       setGroupBusy(null)
     }
@@ -206,6 +239,7 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const renderSession = (item: SessionListItem): React.ReactNode => {
     const active = item.path === snapshot?.activeSessionPath
     const confirmDelete = confirming === item.path
+    const sourceGroup = item.groupId === null ? null : groups.find((group) => group.id === item.groupId)
     const requestDelete = (): void => {
       clearConfirmTimer()
       setConfirming(item.path)
@@ -232,13 +266,24 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
             <span className="session-time">{formatTime(item.modifiedAt)}</span>
           </span>
           <span className="session-preview">{item.preview}</span>
-          {item.workspace ? (
-            <span className="session-ws" title={item.workspace.path}>
-              <Folder size={10} className="session-ws-icon" aria-hidden="true" />
-              <span className="session-ws-name">{item.workspace.name}</span>
+          <span className="session-context">
+            <span className="session-location">
+              {searching ? (
+                <span className="session-group-source" title={sourceGroup?.name ?? t('sidebar.ungrouped')}>
+                  {sourceGroup?.name ?? t('sidebar.ungrouped')}
+                </span>
+              ) : null}
+              {item.workspace ? (
+                <span className="session-ws" title={item.workspace.path}>
+                  <Folder size={10} className="session-ws-icon" aria-hidden="true" />
+                  <span className="session-ws-name">{item.workspace.name}</span>
+                </span>
+              ) : null}
             </span>
-          ) : null}
-          <span className="session-meta">{t('sidebar.messages', { n: item.messageCount })}</span>
+            {item.messageCount > 0 ? (
+              <span className="session-meta">{t('sidebar.messages', { n: item.messageCount })}</span>
+            ) : null}
+          </span>
         </button>
         <button
           type="button"
@@ -272,8 +317,8 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
   const renderGroup = (group: SessionGroup): React.ReactNode => {
     const items = buckets.get(group.id) ?? []
     const open = !collapsed[group.id]
-    const renamingThis = renaming === group.id
     const dirCount = group.dirs.length
+    const itemsId = `session-group-${group.id}`
     return (
       <div
         key={group.id}
@@ -284,39 +329,26 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
       >
         <div
           className={`session-group-head${open ? ' session-group-head-open' : ''}`}
-          role="button"
-          tabIndex={0}
-          aria-expanded={open}
-          onClick={() => toggle(group.id)}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(group.id) } }}
         >
-          {open ? <ChevronDown size={13} className="session-group-chevron" aria-hidden="true" /> : <ChevronRight size={13} className="session-group-chevron" aria-hidden="true" />}
-          <span className="session-group-icon" aria-hidden="true">
-            <Folder size={15} />
-          </span>
-          <span className="session-group-text">
-            {renamingThis ? (
-              <input
-                className="session-group-rename"
-                value={renameValue}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-                onFocus={(e) => e.target.select()}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitRename(group.id)
-                  if (e.key === 'Escape') setRenaming(null)
-                }}
-                onBlur={() => void submitRename(group.id)}
-              />
-            ) : (
-              <span className="session-group-name" title={group.dirs.map((d) => d).join('\n')}>{group.name}</span>
-            )}
-            <span className="session-group-sub">
-              {t('sidebar.groupMeta', { sessions: items.length, dirs: dirCount })}
+          <button
+            type="button"
+            className="session-group-toggle"
+            aria-expanded={open}
+            aria-controls={itemsId}
+            onClick={() => toggle(group.id)}
+          >
+            {open ? <ChevronDown size={13} className="session-group-chevron" aria-hidden="true" /> : <ChevronRight size={13} className="session-group-chevron" aria-hidden="true" />}
+            <span className="session-group-icon" aria-hidden="true">
+              <Folder size={15} />
             </span>
-          </span>
-          <span className="session-group-actions">
+            <span className="session-group-text">
+              <span className="session-group-name" title={group.dirs.join('\n')}>{group.name}</span>
+              <span className="session-group-sub">
+                {t('sidebar.groupMeta', { sessions: items.length, dirs: dirCount })}
+              </span>
+            </span>
+          </button>
+          <span className="session-group-actions" data-group-menu={group.id}>
             <button
               type="button"
               className="btn-icon session-group-btn"
@@ -333,31 +365,60 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
             <button
               type="button"
               className="btn-icon session-group-btn"
-              aria-label={t('sidebar.renameGroup')}
-              title={t('sidebar.renameGroup')}
-              onClick={(e) => {
-                e.stopPropagation()
-                setRenaming(group.id)
-                setRenameValue(group.name)
+              aria-label={t('sidebar.groupActions', { name: group.name })}
+              title={t('sidebar.groupActions', { name: group.name })}
+              aria-haspopup="menu"
+              aria-expanded={groupMenu === group.id}
+              onClick={() => {
+                setConfirmingGroup(null)
+                setGroupMenu((current) => current === group.id ? null : group.id)
               }}
             >
-              <Pencil size={13} aria-hidden="true" />
+              <MoreHorizontal size={14} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              className="btn-icon session-group-btn session-group-btn-del"
-              aria-label={t('sidebar.deleteGroup')}
-              title={t('sidebar.deleteGroupHint')}
-              onClick={(e) => {
-                e.stopPropagation()
-                void window.pi.deleteSessionGroup(group.id)
-              }}
-            >
-              <Trash2 size={13} aria-hidden="true" />
-            </button>
+            {groupMenu === group.id ? (
+              <div className="session-group-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setGroupMenu(null)
+                    setConfirmingGroup(null)
+                    startEdit(group)
+                  }}
+                >
+                  <Pencil size={12} aria-hidden="true" />
+                  <span>{t('sidebar.editGroup')}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`session-group-menu-delete${confirmingGroup === group.id ? ' session-group-menu-delete-confirm' : ''}`}
+                  title={confirmingGroup === group.id ? t('sidebar.confirmDeleteGroupHint') : t('sidebar.deleteGroupHint')}
+                  onClick={() => {
+                    if (confirmingGroup !== group.id) {
+                      setConfirmingGroup(group.id)
+                      return
+                    }
+                    setGroupMenu(null)
+                    setConfirmingGroup(null)
+                    void window.pi.deleteSessionGroup(group.id)
+                  }}
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                  <span>{confirmingGroup === group.id ? t('sidebar.confirmDeleteGroup') : t('sidebar.deleteGroup')}</span>
+                </button>
+              </div>
+            ) : null}
           </span>
         </div>
-        {open ? <div className="session-group-items">{items.map(renderSession)}</div> : null}
+        {open ? (
+          <div className="session-group-items" id={itemsId}>
+            {items.length > 0 ? items.map(renderSession) : (
+              <span className="session-group-empty">{t('sidebar.groupDropHint')}</span>
+            )}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -476,8 +537,32 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
           )
         ) : (
           <>
-        {creating ? (
+        {workspace ? (
+          <div className="session-list-toolbar">
+            <span className="session-list-title">
+              <span>{t('sidebar.groups')}</span>
+              {groups.length > 0 ? <span className="session-list-count">{groups.length}</span> : null}
+            </span>
+            <button
+              type="button"
+              className="session-group-add"
+              onClick={startCreate}
+              disabled={creating || editingGroup !== null || busy}
+            >
+              <Plus size={11} aria-hidden="true" />
+              <span>{t('sidebar.newGroup')}</span>
+            </button>
+          </div>
+        ) : null}
+
+        {creating || editingGroup !== null ? (
           <div className="group-form">
+            <div className="group-form-heading">
+              <span>{editingGroup === null ? t('sidebar.newGroup') : t('sidebar.editGroup')}</span>
+              <button type="button" className="btn-icon group-form-close" aria-label={t('common.close')} onClick={closeGroupForm}>
+                <X size={12} aria-hidden="true" />
+              </button>
+            </div>
             <div className="group-form-row">
               <input
                 className="group-form-name"
@@ -486,11 +571,11 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
                 aria-label={t('sidebar.groupName')}
                 autoFocus
                 onChange={(e) => setGroupName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void submitCreate() }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void submitGroup()
+                  if (e.key === 'Escape') closeGroupForm()
+                }}
               />
-              <button type="button" className="btn-icon group-form-close" aria-label={t('common.close')} onClick={() => setCreating(false)}>
-                <X size={12} aria-hidden="true" />
-              </button>
             </div>
             <div className="group-form-dirs">
               {groupDirs.map((dir) => (
@@ -517,16 +602,16 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
-                onClick={() => void submitCreate()}
+                onClick={() => void submitGroup()}
                 disabled={groupName.trim() === '' || groupDirs.length === 0}
               >
-                {t('sidebar.createGroup')}
+                {editingGroup === null ? t('sidebar.createGroup') : t('sidebar.saveGroup')}
               </button>
             </div>
           </div>
         ) : null}
 
-        {groups.length === 0 && ungrouped.length === 0 && !creating ? (
+        {groups.length === 0 && ungrouped.length === 0 && !creating && editingGroup === null ? (
           <div className="sidebar-empty">
             {workspace ? (
               <>
@@ -556,6 +641,13 @@ export default function Sidebar({ snapshot, busy, onOpenDir, onNewSession, onOpe
             onDragLeave={() => setDragOver((cur) => (cur === UNGROUPED_KEY ? null : cur))}
             onDrop={(e) => void onDrop(e, null)}
           >
+            <div className="session-ungrouped-head">
+              <Inbox size={12} aria-hidden="true" />
+              <span className="session-ungrouped-label">
+                {groups.length > 0 ? t('sidebar.ungrouped') : t('sidebar.recentSessions')}
+              </span>
+              <span className="session-list-count">{ungrouped.length}</span>
+            </div>
             {ungrouped.map(renderSession)}
           </div>
         ) : null}

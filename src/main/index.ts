@@ -190,7 +190,10 @@ ipcMain.handle(IPC.windowMaximizeToggle, () => {
 })
 ipcMain.handle(IPC.windowClose, () => { mainWindow?.close() })
 ipcMain.handle(IPC.windowMaximized, () => mainWindow?.isMaximized() ?? false)
-ipcMain.handle(IPC.newSession, () => runtime.newSession())
+ipcMain.handle(IPC.newSession, (_event, groupId: unknown) => {
+  if (groupId !== undefined && groupId !== null && !isSessionGroupName(groupId)) throw new Error('Invalid session group')
+  return runtime.newSession(groupId as string | null | undefined)
+})
 ipcMain.handle(IPC.openSession, (_event, path: unknown) => runtime.openSession(textArg(path, 'session')))
 ipcMain.handle(IPC.deleteSession, (_event, path: unknown) => runtime.deleteSession(textArg(path, 'session')))
 ipcMain.handle(IPC.renameSession, (_event, name: unknown) => runtime.renameSession(textArg(name, 'session name')))
@@ -211,6 +214,10 @@ ipcMain.handle(IPC.renameSessionGroup, (_event, id: unknown, name: unknown) => {
   if (!isSessionGroupName(id) || !isSessionGroupName(name)) throw new Error('Invalid session group')
   return runtime.renameSessionGroup(id, name)
 })
+ipcMain.handle(IPC.updateSessionGroup, (_event, id: unknown, name: unknown, dirs: unknown) => {
+  if (!isSessionGroupName(id) || !isSessionGroupName(name) || !isGroupDirs(dirs)) throw new Error('Invalid session group')
+  return runtime.updateSessionGroup(id, name, dirs)
+})
 ipcMain.handle(IPC.deleteSessionGroup, (_event, id: unknown) => {
   if (!isSessionGroupName(id)) throw new Error('Invalid session group')
   return runtime.deleteSessionGroup(id)
@@ -230,6 +237,7 @@ ipcMain.handle(IPC.appInfo, (): AppInfo => ({
 }))
 ipcMain.handle(IPC.dynamicCommands, () => runtime.getDynamicCommands())
 ipcMain.handle(IPC.extensions, () => runtime.getExtensions())
+ipcMain.handle(IPC.skills, () => runtime.getSkills())
 ipcMain.handle(IPC.providerConfig, (_event, providerId: unknown) => runtime.getProviderConfig(textArg(providerId, 'provider')))
 ipcMain.handle(IPC.providerTypes, () => runtime.getProviderTypes())
 ipcMain.handle(IPC.saveProviderKey, (_event, providerId: unknown, apiKey: unknown) => runtime.saveProviderKey(textArg(providerId, 'provider'), textArg(apiKey, 'apiKey')))

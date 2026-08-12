@@ -343,6 +343,32 @@ export interface ExtensionsInfo {
   errors: { path: string; error: string }[]
 }
 
+/** One loaded skill, as surfaced to the Settings skills section. */
+export interface SkillInfo {
+  name: string
+  description: string
+  filePath: string
+  baseDir: string
+  /** Discovery scope reported by pi's resource loader. */
+  sourceLabel: 'user' | 'project' | 'temporary'
+  /** Original configured source (`auto`, `npm:…`, `git:…`, etc.). */
+  source: string
+  origin: 'package' | 'top-level'
+  /** True means the skill is available only through `/skill:<name>`. */
+  disableModelInvocation: boolean
+}
+
+export interface SkillDiagnosticInfo {
+  type: 'warning' | 'error' | 'collision'
+  message: string
+  path: string | null
+}
+
+export interface SkillsInfo {
+  skills: SkillInfo[]
+  diagnostics: SkillDiagnosticInfo[]
+}
+
 /** A user-level subagent definition (frontmatter + system prompt body). */
 export interface SubagentConfig {
   name: string
@@ -508,7 +534,8 @@ export interface PiDesktopApi {
   getWindowMaximized(): Promise<boolean>
   /** Subscribe to maximize/unmaximize changes; returns the unsubscribe fn. */
   onMaximizedChange(listener: (maximized: boolean) => void): () => void
-  newSession(): Promise<AppSnapshot>
+  /** Creates a session; null pins it ungrouped, a group id pins it there, undefined uses directory matching. */
+  newSession(groupId?: string | null): Promise<AppSnapshot>
   openSession(path: string): Promise<AppSnapshot>
   deleteSession(path: string): Promise<AppSnapshot>
   renameSession(name: string): Promise<AppSnapshot>
@@ -522,6 +549,8 @@ export interface PiDesktopApi {
   /** Creates a session group bound to the given workspace directories. */
   createSessionGroup(name: string, dirs: string[]): Promise<AppSnapshot>
   renameSessionGroup(id: string, name: string): Promise<AppSnapshot>
+  /** Updates both the display name and bound directories of an existing group. */
+  updateSessionGroup(id: string, name: string, dirs: string[]): Promise<AppSnapshot>
   deleteSessionGroup(id: string): Promise<AppSnapshot>
   /** Pins a session to a group (drag) — or out of every group when id is null. */
   moveSessionToGroup(sessionPath: string, groupId: string | null): Promise<AppSnapshot>
@@ -529,6 +558,7 @@ export interface PiDesktopApi {
   getAppInfo(): Promise<AppInfo>
   getDynamicCommands(): Promise<DynamicCommand[]>
   getExtensions(): Promise<ExtensionsInfo>
+  getSkills(): Promise<SkillsInfo>
   getProviderConfig(providerId: string): Promise<ProviderEditConfig | null>
   getProviderTypes(): Promise<ProviderTypeInfo[]>
   /** Persists an API key for a pi built-in provider (models.json). */
@@ -595,8 +625,8 @@ export const IPC = {
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
-  pickDirectory: 'pi:pick-directory', createSessionGroup: 'pi:create-session-group', renameSessionGroup: 'pi:rename-session-group', deleteSessionGroup: 'pi:delete-session-group', moveSessionToGroup: 'pi:move-session-to-group',
-  dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
+  pickDirectory: 'pi:pick-directory', createSessionGroup: 'pi:create-session-group', renameSessionGroup: 'pi:rename-session-group', updateSessionGroup: 'pi:update-session-group', deleteSessionGroup: 'pi:delete-session-group', moveSessionToGroup: 'pi:move-session-to-group',
+  dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', skills: 'pi:skills', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',
   packages: 'pi:packages', packageInstall: 'pi:package-install', packageUpdate: 'pi:package-update', packageRemove: 'pi:package-remove', packageCheck: 'pi:package-check',

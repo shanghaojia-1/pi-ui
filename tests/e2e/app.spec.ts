@@ -32,6 +32,7 @@ const API_METHODS = [
   'getEngineStatus',
   'getEngineVersions',
   'getExtensions',
+  'getSkills',
   'getPackages',
   'getProviderConfig',
   'getProviderTypes',
@@ -72,6 +73,7 @@ const API_METHODS = [
   'toggleMaximizeWindow',
   'uninstallEngine',
   'updatePackages',
+  'updateSessionGroup',
   'updateSettings',
 ].sort()
 
@@ -96,6 +98,12 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     for (const dir of [tempHome, tempAgent, tempWorkspace, tempUserData]) mkdirSync(dir)
     seedConfiguredEngine(tempUserData, PROJECT_ROOT)
     writeFileSync(join(tempWorkspace, 'README.md'), '# E2E sandbox workspace\n')
+    const skillDir = join(tempWorkspace, '.pi', 'skills', 'e2e-review')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: e2e-review\ndescription: Review the E2E workspace\n---\n\nReview changes carefully.\n',
+    )
 
     const env = { ...process.env, HOME: tempHome, PI_CODING_AGENT_DIR: tempAgent, PI_STUDIO_LANG: 'zh', PI_STUDIO_USER_DATA: tempUserData } as Record<string, string>
     delete env.ELECTRON_RENDERER_URL
@@ -170,6 +178,36 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     expect(snap.usage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 })
     // startup may surface a model-fallback warning, but nothing else
     expect(snap.error === null || /model/i.test((snap.error as { message: string }).message)).toBe(true)
+  })
+
+  test('sandbox: project skills cross the main/preload contract with discovery metadata', async () => {
+    const info = await page.evaluate(() => window.pi.getSkills())
+    expect(info.diagnostics).toEqual(expect.any(Array))
+    expect(info.skills).toContainEqual(expect.objectContaining({
+      name: 'e2e-review',
+      description: 'Review the E2E workspace',
+      sourceLabel: 'project',
+      origin: 'top-level',
+      disableModelInvocation: false,
+    }))
+  })
+
+  test('settings: skills partition lists, searches, and expands a project skill', async () => {
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '设置' })
+    await dialog.getByRole('button', { name: '技能', exact: true }).click()
+    await expect(dialog.getByRole('heading', { name: '技能', exact: true })).toBeVisible()
+    await expect(dialog.getByText('e2e-review', { exact: true })).toBeVisible()
+    await expect(dialog.getByText('Review the E2E workspace', { exact: true })).toBeVisible()
+
+    const search = dialog.getByRole('searchbox', { name: '搜索技能' })
+    await search.fill('missing-skill')
+    await expect(dialog.getByText('没有匹配的技能', { exact: true })).toBeVisible()
+    await search.fill('e2e-review')
+    await dialog.locator('.sett-skill-summary').click()
+    await expect(dialog.getByText(/\.pi\/skills\/e2e-review\/SKILL\.md$/)).toBeVisible()
+    await expect(dialog.getByText('/skill:e2e-review', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '关闭设置' }).click()
   })
 
   test('wide layout: sidebar / main / right panel / topbar / statusbar all present', async () => {
@@ -334,6 +372,26 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     expect(after.error === null || (after.error as { message: string }).message === 'Model fallback').toBe(true)
     await expect(page.locator('.session-item-active')).toHaveCount(1)
     expect(pageErrors).toEqual([])
+  })
+
+  test('session groups: edit bound directories and atomically create an ungrouped empty task', async () => {
+    const workspacePath = realpathSync(tempWorkspace)
+    const created = await page.evaluate((dir) => window.pi.createSessionGroup('Work', [dir]), workspacePath)
+    const group = created.groups.find((item) => item.name === 'Work')
+    expect(group).toBeTruthy()
+
+    const edited = await page.evaluate(
+      ({ id, dir }) => window.pi.updateSessionGroup(id, 'Desktop', [dir]),
+      { id: group!.id, dir: workspacePath },
+    )
+    expect(edited.groups.find((item) => item.id === group!.id)).toEqual({ id: group!.id, name: 'Desktop', dirs: [workspacePath] })
+
+    const fresh = await page.evaluate(() => window.pi.newSession(null))
+    expect(fresh.activeSessionPath).toBeTruthy()
+    expect(fresh.sessions.find((item) => item.path === fresh.activeSessionPath)?.groupId).toBeNull()
+    expect(fresh.error?.message).not.toBe('Failed to move session')
+
+    await page.evaluate((id) => window.pi.deleteSessionGroup(id), group!.id)
   })
 
   test('delete session: gated paths, inactive removed from disk, active replaced by fresh session', async () => {

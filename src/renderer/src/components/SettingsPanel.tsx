@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Bot, Image as ImageIcon, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, TriangleAlert, X } from 'lucide-react'
+import { Bot, Image as ImageIcon, LoaderCircle, Pencil, Plus, RefreshCw, RotateCcw, Search, TriangleAlert, X } from 'lucide-react'
 import type {
   AppSnapshot,
   CustomProviderApi,
@@ -12,6 +12,7 @@ import type {
   ProviderTypeInfo,
   SettingsPatch,
   SettingsSnapshot,
+  SkillsInfo,
   SubagentConfig,
   SubagentEdit,
   ThinkingLevel,
@@ -74,6 +75,7 @@ const NAV_ITEMS = [
   { id: 'appearance', labelKey: 'settings.appearance' },
   { id: 'providers', labelKey: 'settings.providers' },
   { id: 'subagents', labelKey: 'settings.subagents' },
+  { id: 'skills', labelKey: 'settings.skills' },
   { id: 'extensions', labelKey: 'settings.extensions' },
   { id: 'engine', labelKey: 'settings.engine' },
   { id: 'defaults', labelKey: 'settings.defaults' },
@@ -134,6 +136,8 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [retry, setRetry] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
+  const [skillsInfo, setSkillsInfo] = useState<SkillsInfo | null>(null)
+  const [skillQuery, setSkillQuery] = useState('')
   /** User-level subagent definitions for the Subagents section. */
   const [subagents, setSubagents] = useState<SubagentConfig[] | null>(null)
   /** Subagent editor state: open + the file key being edited (null = create). */
@@ -234,6 +238,11 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   // Loaded-extension inventory for the Extensions section.
   useEffect(() => {
     window.pi.getExtensions().then(setExtensionsInfo, () => setExtensionsInfo(null))
+  }, [])
+
+  // Loaded skills and discovery diagnostics for the Skills section.
+  useEffect(() => {
+    window.pi.getSkills().then(setSkillsInfo, () => setSkillsInfo(null))
   }, [])
 
   // User-level subagents for the Subagents section.
@@ -966,6 +975,16 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       })),
     [snapshot.models],
   )
+
+  const filteredSkills = useMemo(() => {
+    if (skillsInfo === null) return []
+    const query = skillQuery.trim().toLocaleLowerCase()
+    if (query === '') return skillsInfo.skills
+    return skillsInfo.skills.filter((skill) =>
+      [skill.name, skill.description, skill.filePath, skill.source]
+        .some((value) => value.toLocaleLowerCase().includes(query)),
+    )
+  }, [skillQuery, skillsInfo])
   // The currently selected option value, or '' for "follow last".
   const currentModelValue = useMemo(
     () => modelOptions.find((o) => o.provider === defaultProvider && o.id === defaultModel)?.value ?? '',
@@ -1313,6 +1332,129 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       </div>
                     ))}
                   </div>
+                )}
+              </section>
+              ) : null}
+
+              {activeNav === 'skills' ? (
+              <section className="sett-section" aria-labelledby="sett-skills-title" data-sett-nav-target="skills">
+                <div className="sett-section-head">
+                  <h3 id="sett-skills-title">{t('settings.skills')}</h3>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={anyBusy}
+                    onClick={() => {
+                      setBusy('refresh')
+                      window.pi
+                        .reloadSession()
+                        .then(async () => {
+                          const info = await window.pi.getSkills()
+                          setSkillsInfo(info)
+                          setLive({ kind: 'success', text: t('settings.skillsReloaded') })
+                        })
+                        .catch((e: unknown) => setLive({ kind: 'error', text: errorMessage(e) }))
+                        .finally(() => setBusy(null))
+                    }}
+                  >
+                    <RefreshCw size={13} aria-hidden="true" />
+                    {busy === 'refresh' ? t('settings.refreshing') : t('settings.reloadSkills')}
+                  </button>
+                </div>
+                <p className="sett-hint">{t('settings.skillsHint')}</p>
+                {skillsInfo === null ? (
+                  <div className="sett-state sett-state-inline">
+                    <LoaderCircle size={16} className="sett-spin" aria-hidden="true" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="sett-skill-toolbar">
+                      <span className="sett-skill-count">
+                        {t('settings.skillCount', { n: skillsInfo.skills.length })}
+                      </span>
+                      <label className="sett-skill-search">
+                        <Search size={13} aria-hidden="true" />
+                        <input
+                          type="search"
+                          value={skillQuery}
+                          onChange={(event) => setSkillQuery(event.target.value)}
+                          placeholder={t('settings.skillSearchPlaceholder')}
+                          aria-label={t('settings.skillSearch')}
+                        />
+                        {skillQuery !== '' ? (
+                          <button
+                            type="button"
+                            className="btn-icon"
+                            onClick={() => setSkillQuery('')}
+                            aria-label={t('settings.skillSearchClear')}
+                          >
+                            <X size={12} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </label>
+                    </div>
+
+                    {skillsInfo.skills.length === 0 ? (
+                      <p className="sett-hint">{t('settings.noSkills')}</p>
+                    ) : filteredSkills.length === 0 ? (
+                      <p className="sett-hint">{t('settings.noSkillMatches')}</p>
+                    ) : (
+                      <div className="sett-skill-list">
+                        {filteredSkills.map((skill) => (
+                          <details className="sett-skill" key={skill.filePath}>
+                            <summary className="sett-skill-summary">
+                              <span className="sett-skill-main">
+                                <span className="sett-skill-title-row">
+                                  <span className="sett-skill-name">{skill.name}</span>
+                                  <span className={`sett-skill-scope sett-skill-scope-${skill.sourceLabel}`}>
+                                    {t(`settings.skillSource.${skill.sourceLabel}`)}
+                                  </span>
+                                </span>
+                                <span className="sett-skill-description">
+                                  {skill.description || t('settings.skillNoDescription')}
+                                </span>
+                              </span>
+                            </summary>
+                            <div className="sett-skill-details">
+                              <div>
+                                <span>{t('settings.skillPath')}</span>
+                                <code title={skill.filePath}>{skill.filePath}</code>
+                              </div>
+                              <div>
+                                <span>{t('settings.skillSourceLabel')}</span>
+                                <code>{skill.source}</code>
+                                <small>{t(`settings.skillOrigin.${skill.origin}`)}</small>
+                              </div>
+                              <div>
+                                <span>{t('settings.skillInvocation')}</span>
+                                <strong>
+                                  {skill.disableModelInvocation
+                                    ? t('settings.skillInvocation.manual')
+                                    : t('settings.skillInvocation.auto')}
+                                </strong>
+                                <code>/skill:{skill.name}</code>
+                              </div>
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    )}
+
+                    {skillsInfo.diagnostics.length > 0 ? (
+                      <div className="sett-skill-diagnostics">
+                        <p>{t('settings.skillDiagnostics')}</p>
+                        {skillsInfo.diagnostics.map((diagnostic, index) => (
+                          <div
+                            className={`sett-skill-diagnostic sett-skill-diagnostic-${diagnostic.type}`}
+                            key={`${diagnostic.type}:${diagnostic.path ?? ''}:${index}`}
+                          >
+                            <span>{diagnostic.message}</span>
+                            {diagnostic.path !== null ? <code>{diagnostic.path}</code> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </section>
               ) : null}

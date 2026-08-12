@@ -57,7 +57,9 @@ const api = {
   logoutProvider: vi.fn(),
   refreshModels: vi.fn(),
   setToolApprovalMode: vi.fn(),
+  reloadSession: vi.fn().mockResolvedValue(snapshot),
   getExtensions: vi.fn().mockResolvedValue({ extensions: [], errors: [] }),
+  getSkills: vi.fn().mockResolvedValue({ skills: [], diagnostics: [] }),
   getProviderConfig: vi.fn(),
   getProviderTypes: vi.fn().mockResolvedValue([]),
   testProviderConnection: vi.fn(),
@@ -677,11 +679,81 @@ describe('SettingsPanel', () => {
     await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
     const nav = screen.getByRole('navigation', { name: '设置分区' })
     const items = nav.querySelectorAll('.sett-nav-item')
-    expect(items.length).toBe(8)
+    expect(items.length).toBe(9)
     expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('外观')
     const approval = Array.from(items).find((b) => b.textContent === '工具审批') as HTMLElement
     fireEvent.click(approval)
     expect(nav.querySelector('[aria-current="true"]')?.textContent).toBe('工具审批')
+  })
+
+  // ---------- skills ----------
+
+  it('lists and filters skills, then exposes source and invocation details', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.getSkills).mockResolvedValue({
+      skills: [
+        {
+          name: 'review-code',
+          description: 'Review a change for correctness',
+          filePath: '/tmp/ws/.pi/skills/review-code/SKILL.md',
+          baseDir: '/tmp/ws/.pi/skills/review-code',
+          sourceLabel: 'project',
+          source: 'auto',
+          origin: 'top-level',
+          disableModelInvocation: false,
+        },
+        {
+          name: 'release',
+          description: 'Prepare a release',
+          filePath: '/agent/skills/release/SKILL.md',
+          baseDir: '/agent/skills/release',
+          sourceLabel: 'user',
+          source: 'npm:release-tools',
+          origin: 'package',
+          disableModelInvocation: true,
+        },
+      ],
+      diagnostics: [{ type: 'warning', message: 'Ignored malformed metadata', path: '/tmp/bad/SKILL.md' }],
+    })
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('技能')
+    await waitFor(() => expect(screen.getByText('review-code')).toBeTruthy())
+    expect(screen.getByText('release')).toBeTruthy()
+    expect(screen.getByText('2 个技能')).toBeTruthy()
+    expect(screen.getByText('加载诊断')).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('搜索技能'), { target: { value: 'release-tools' } })
+    expect(screen.queryByText('review-code')).toBeNull()
+    const release = screen.getByText('release').closest('details')!
+    fireEvent.click(release.querySelector('summary')!)
+    expect(screen.getByText('/agent/skills/release/SKILL.md')).toBeTruthy()
+    expect(screen.getByText('仅显式调用')).toBeTruthy()
+    expect(screen.getByText('/skill:release')).toBeTruthy()
+  })
+
+  it('reloads the session and refreshes the skill inventory', async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(settings())
+    vi.mocked(api.getSkills)
+      .mockResolvedValueOnce({ skills: [], diagnostics: [] })
+      .mockResolvedValueOnce({
+        skills: [{
+          name: 'new-skill', description: 'Freshly loaded', filePath: '/skill/SKILL.md', baseDir: '/skill',
+          sourceLabel: 'user', source: 'auto', origin: 'top-level', disableModelInvocation: false,
+        }],
+        diagnostics: [],
+      })
+    vi.mocked(api.reloadSession).mockResolvedValue(snapshot)
+
+    renderPanel(<SettingsPanel snapshot={snapshot} onClose={onClose} />)
+    await waitFor(() => expect(screen.getByRole('navigation', { name: '设置分区' })).toBeTruthy())
+    gotoNav('技能')
+    await waitFor(() => expect(screen.getByText(/当前没有发现技能/)).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '重载技能' }))
+    await waitFor(() => expect(screen.getByText('new-skill')).toBeTruthy())
+    expect(api.reloadSession).toHaveBeenCalledTimes(1)
+    expect(api.getSkills).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('技能已重载')).toBeTruthy()
   })
 
   it('initialSection="approval" activates the approval entry in the rail', async () => {

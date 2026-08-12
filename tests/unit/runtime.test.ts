@@ -130,6 +130,10 @@ class FakeSession {
   getContextUsage: (() => unknown) | null = null
   private subscriber: ((event: unknown) => void) | null = null
   activeToolNames = ['read', 'bash', 'edit', 'write', 'subagent']
+  resourceLoader: { getExtensions: () => unknown; getSkills: () => unknown } = {
+    getExtensions: () => ({ extensions: [], errors: [] }),
+    getSkills: () => ({ skills: [], diagnostics: [] }),
+  }
 
   prompt(text: string, options?: Record<string, unknown>): Promise<unknown> {
     this.promptCalls.push({ text, options })
@@ -202,6 +206,66 @@ describe('session tool activation', () => {
     expect(session.activeToolNames).toEqual([
       'read', 'bash', 'edit', 'write', 'subagent', 'grep', 'find', 'ls',
     ])
+  })
+})
+
+describe('skill inventory', () => {
+  it('returns sorted loader metadata and diagnostics without exposing SDK objects', async () => {
+    const session = new FakeSession()
+    session.resourceLoader.getSkills = () => ({
+      skills: [
+        {
+          name: 'zeta', description: 'Z skill', filePath: '/project/zeta/SKILL.md', baseDir: '/project/zeta',
+          sourceInfo: { scope: 'project', source: 'auto', origin: 'top-level' }, disableModelInvocation: false,
+        },
+        {
+          name: 'alpha', description: 'A skill', filePath: '/user/alpha/SKILL.md', baseDir: '/user/alpha',
+          sourceInfo: { scope: 'user', source: 'npm:skill-pack', origin: 'package' }, disableModelInvocation: true,
+        },
+      ],
+      diagnostics: [{ type: 'collision', message: 'alpha shadowed', path: '/old/alpha/SKILL.md' }],
+    })
+    const runtime = await initRuntime(undefined, session)
+
+    expect(await runtime.getSkills()).toEqual({
+      skills: [
+        {
+          name: 'alpha', description: 'A skill', filePath: '/user/alpha/SKILL.md', baseDir: '/user/alpha',
+          sourceLabel: 'user', source: 'npm:skill-pack', origin: 'package', disableModelInvocation: true,
+        },
+        {
+          name: 'zeta', description: 'Z skill', filePath: '/project/zeta/SKILL.md', baseDir: '/project/zeta',
+          sourceLabel: 'project', source: 'auto', origin: 'top-level', disableModelInvocation: false,
+        },
+      ],
+      diagnostics: [{ type: 'collision', message: 'alpha shadowed', path: '/old/alpha/SKILL.md' }],
+    })
+  })
+})
+
+describe('session group mutations', () => {
+  it('updates group directories and atomically pins a not-yet-flushed session as ungrouped', async () => {
+    const isolatedAgent = mkdtempSync(join(TMP, 'pi-groups-runtime-'))
+    mocks.getAgentDir.mockReturnValue(isolatedAgent)
+    const workspace = mkdtempSync(join(TMP, 'pi-groups-ws-'))
+    const initial = new FakeSession()
+    const runtime = await initRuntime(workspace, initial)
+
+    const created = await runtime.createSessionGroup('Work', [workspace])
+    const id = created.groups[0]!.id
+    const otherDir = join(workspace, 'packages', 'desktop')
+    const updated = await runtime.updateSessionGroup(id, 'Desktop', [otherDir])
+    expect(updated.groups).toEqual([{ id, name: 'Desktop', dirs: [otherDir] }])
+
+    const fresh = new FakeSession()
+    fresh.sessionFile = join(isolatedAgent, 'sessions', 'encoded-workspace', 'fresh.jsonl')
+    mocks.createAgentSession.mockResolvedValue({ session: fresh, modelFallbackMessage: undefined })
+    const snap = await runtime.newSession(null)
+
+    expect(existsSync(fresh.sessionFile)).toBe(false)
+    expect(snap.error).toBeNull()
+    expect(snap.activeSessionPath).toBe(fresh.sessionFile)
+    expect(snap.sessions.find((item) => item.path === fresh.sessionFile)?.groupId).toBeNull()
   })
 })
 

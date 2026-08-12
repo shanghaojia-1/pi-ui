@@ -43,7 +43,7 @@ const api: PiDesktopApi = {
     ipcRenderer.on(IPC.windowMaximizedChanged, wrapped)
     return () => ipcRenderer.removeListener(IPC.windowMaximizedChanged, wrapped)
   },
-  newSession: () => ipcRenderer.invoke(IPC.newSession),
+  newSession: (groupId?: string | null) => ipcRenderer.invoke(IPC.newSession, groupId),
   openSession: (path: string) => ipcRenderer.invoke(IPC.openSession, path),
   deleteSession: (path: string) => ipcRenderer.invoke(IPC.deleteSession, path),
   renameSession: (name: string) => ipcRenderer.invoke(IPC.renameSession, name),
@@ -55,12 +55,14 @@ const api: PiDesktopApi = {
   pickDirectory: () => ipcRenderer.invoke(IPC.pickDirectory),
   createSessionGroup: (name: string, dirs: string[]) => ipcRenderer.invoke(IPC.createSessionGroup, name, dirs),
   renameSessionGroup: (id: string, name: string) => ipcRenderer.invoke(IPC.renameSessionGroup, id, name),
+  updateSessionGroup: (id: string, name: string, dirs: string[]) => ipcRenderer.invoke(IPC.updateSessionGroup, id, name, dirs),
   deleteSessionGroup: (id: string) => ipcRenderer.invoke(IPC.deleteSessionGroup, id),
   moveSessionToGroup: (sessionPath: string, groupId: string | null) => ipcRenderer.invoke(IPC.moveSessionToGroup, sessionPath, groupId),
   quitApp: () => ipcRenderer.invoke(IPC.quitApp),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
   getDynamicCommands: () => ipcRenderer.invoke(IPC.dynamicCommands),
   getExtensions: () => ipcRenderer.invoke(IPC.extensions),
+  getSkills: () => ipcRenderer.invoke(IPC.skills),
   getProviderConfig: (providerId: string) => ipcRenderer.invoke(IPC.providerConfig, providerId),
   getProviderTypes: () => ipcRenderer.invoke(IPC.providerTypes),
   saveProviderKey: (providerId: string, apiKey: string) => ipcRenderer.invoke(IPC.saveProviderKey, providerId, apiKey),
