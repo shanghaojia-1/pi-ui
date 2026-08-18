@@ -24,6 +24,7 @@ import type {
 import { formatCost, formatDuration, formatTokens } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 import Markdown from './Markdown'
+import ArtifactChips from './ArtifactChips'
 
 /** Guard both legacy persisted details and the version 2 live protocol. */
 export function isSubagentDetails(value: unknown): value is SubagentDetails {
@@ -270,6 +271,7 @@ export default function SubagentCard({ tool }: { tool: ToolBlock }) {
           <span className="toolcall-name">subagent</span>
           <span className="toolcall-state">{t('toolcall.subagent.running')}</span>
         </button>
+        <ArtifactChips artifacts={tool.artifacts} />
         {open ? <div className="toolcall-body subagent-body"><p className="subagent-empty">{t('toolcall.subagent.waiting')}</p></div> : null}
       </div>
     )
@@ -318,6 +320,7 @@ export default function SubagentCard({ tool }: { tool: ToolBlock }) {
           </button>
         ) : null}
       </div>
+      <ArtifactChips artifacts={tool.artifacts} />
       {open ? (
         <div className="toolcall-body subagent-body">
           {details.results.length === 0 ? <p className="subagent-empty">{t('toolcall.subagent.empty')}</p> : null}

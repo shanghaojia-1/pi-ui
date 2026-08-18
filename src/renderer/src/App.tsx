@@ -14,6 +14,7 @@ import SettingsPanel from './components/SettingsPanel'
 import TelemetryBar from './components/TelemetryBar'
 import WindowBar from './components/WindowBar'
 import { getThemeDefinition, useTheme } from './lib/theme'
+import { onRightPanelRequest } from './lib/artifacts'
 
 // Host platform comes from the preload contract (never sniffed from userAgent).
 const platform = window.desktop?.platform ?? 'other'
@@ -112,6 +113,10 @@ export default function App({ initialEngineStatus }: { initialEngineStatus?: Eng
   useEffect(() => {
     if (compact) setSidebarOpen(false)
   }, [compact])
+
+  // Clicking an artifact link (tool chips, markdown links, artifact list) must
+  // reveal the right panel so the preview is actually visible.
+  useEffect(() => onRightPanelRequest(() => setRightOpen(true)), [])
 
   const handleOpenDir = useCallback(async () => {
     setBusy(true)

@@ -50,9 +50,11 @@ const API_METHODS = [
   'onDingtalkStatus',
   'onMaximizedChange',
   'onSnapshot',
+  'openArtifactExternal',
   'openSession',
   'openWorkspace',
   'pickDirectory',
+  'previewArtifact',
   'quitApp',
   'refreshModels',
   'reloadSession',
@@ -305,6 +307,45 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     expect(afterAll.runState).toBe('idle')
     expect(afterAll.error).toEqual(before.error)
     expect(afterAll.thinkingLevel).toBe('off') // no model -> always clamped to 'off'
+  })
+
+  test('artifact preview: workspace documents/videos load, outside files and junk are rejected', async () => {
+    // Seed task products inside the e2e workspace.
+    mkdirSync(join(tempWorkspace, 'docs'), { recursive: true })
+    mkdirSync(join(tempWorkspace, 'out'), { recursive: true })
+    writeFileSync(join(tempWorkspace, 'docs/report.md'), '# 预览测试报告\n\n正文内容。')
+    writeFileSync(join(tempWorkspace, 'out/demo.mp4'), 'not-a-real-video')
+    writeFileSync(join(tempRoot, 'outside.md'), '# outside')
+
+    // Text document: bounded UTF-8 content round-trips through main.
+    const doc = await page.evaluate(async () => window.pi.previewArtifact('docs/report.md'))
+    expect(doc?.kind).toBe('text')
+    expect(doc?.content).toContain('预览测试报告')
+    expect(doc?.name).toBe('report.md')
+    expect(doc?.path).toContain('workspace')
+
+    // Video: validated then streamable through the one-time pi-preview:// token.
+    const video = await page.evaluate(async () => window.pi.previewArtifact('out/demo.mp4'))
+    expect(video?.kind).toBe('video')
+    expect(video?.url).toMatch(/^pi-preview:\/\//)
+    const status = await page.evaluate((url) => fetch(url).then((r) => r.status), video?.url ?? '')
+    expect(status).toBe(200)
+    const content = await page.evaluate((url) => fetch(url).then((r) => r.text()), video?.url ?? '')
+    expect(content).toBe('not-a-real-video')
+
+    // Paths outside the workspace / missing files / junk args never resolve.
+    expect(await page.evaluate((p) => window.pi.previewArtifact(p), join(tempRoot, 'outside.md'))).toBeNull()
+    expect(await page.evaluate(() => window.pi.previewArtifact('docs/missing.md'))).toBeNull()
+    expect(await page.evaluate(() => window.pi.previewArtifact('README.md'))).toMatchObject({ name: 'README.md', kind: 'text' })
+    const rejected = await page.evaluate(
+      () => window.pi.previewArtifact(42 as never).then(() => 'resolved', (e: Error) => e.message),
+    )
+    expect(rejected).toContain('Invalid artifact path')
+
+    // No page errors and the session is untouched.
+    expect(pageErrors).toEqual([])
+    const after = await snapshot()
+    expect(after.messages).toEqual([])
   })
 
   test('image attachments: plain text never rejected, valid images pass IPC, bad payloads rejected', async () => {

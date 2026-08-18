@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path'
 import { delimiter } from 'node:path'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
+import { pathToFileURL } from 'node:url'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
 import { IPC, isApiKey, isCustomProviderConfig, isDingtalkConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type DingtalkConfig, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
 import { DingtalkBridge } from './dingtalk'
@@ -10,6 +11,15 @@ import { PiRuntime } from './runtime'
 import { windowOptionsForPlatform } from './window-options'
 
 const runtime = new PiRuntime()
+
+// Internal scheme for artifact (video/pdf) streaming. Tokens are issued by
+// the runtime only for workspace files that passed artifact validation, so
+// the renderer can never stream an arbitrary file through this scheme.
+protocol.registerSchemesAsPrivileged([
+  // corsEnabled is required: without it the network layer drops cross-origin
+  // fetch/video requests to the scheme before the handler ever fires.
+  { scheme: 'pi-preview', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true, bypassCSP: true } },
+])
 let mainWindow: BrowserWindow | null = null
 let runtimeInitialized = false
 let runtimeInitialization: Promise<boolean> | null = null
@@ -158,6 +168,28 @@ app.whenReady().then(async () => {
     }
   } catch { /* PATH injection is best-effort */ }
   mainWindow = createWindow()
+  // Artifact streaming: resolve pi-preview://<token>/<name> through the
+  // runtime's token table (issued per verified workspace file), then serve
+  // the file from disk with net.fetch. Unknown/malformed tokens 404.
+  protocol.handle('pi-preview', async (request) => {
+    let token: string | null = null
+    try {
+      const url = new URL(request.url)
+      token = url.hostname || url.pathname.replace(/^\//, '').split('/')[0] || null
+    } catch {
+      token = null
+    }
+    const target = token !== null ? runtime.previewTokenPath(token) : null
+    if (target === null) return new Response('Not found', { status: 404 })
+    try {
+      const response = await net.fetch(pathToFileURL(target).toString(), { headers: request.headers })
+      const headers = new Headers(response.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+      return new Response(response.body, { status: response.status, headers })
+    } catch {
+      return new Response('Unreadable', { status: 500 })
+    }
+  })
   // Tool-approval policy: create and load the persisted store BEFORE the
   // runtime starts so the first tool_call already sees the persisted mode.
   // Any load failure fails closed to 'ask' and never reaches the runtime.
@@ -206,6 +238,8 @@ ipcMain.handle(IPC.exportSession, () => runtime.exportSession())
 ipcMain.handle(IPC.sessionStats, () => runtime.getSessionStats())
 ipcMain.handle(IPC.reloadSession, () => runtime.reloadSession())
 ipcMain.handle(IPC.pickDirectory, () => runtime.pickDirectory())
+ipcMain.handle(IPC.artifactPreview, (_event, path: unknown) => runtime.previewArtifact(textArg(path, 'artifact path')))
+ipcMain.handle(IPC.artifactOpenExternal, (_event, path: unknown) => runtime.openArtifactExternal(textArg(path, 'artifact path')))
 ipcMain.handle(IPC.createSessionGroup, (_event, name: unknown, dirs: unknown) => {
   if (!isSessionGroupName(name) || !isGroupDirs(dirs)) throw new Error('Invalid session group')
   return runtime.createSessionGroup(name, dirs)

@@ -263,6 +263,21 @@ const DICT: Dict = {
   'rightPanel.total': { zh: '总处理', en: 'Total processed' },
   'rightPanel.totalTitle': { zh: '总处理 = 输入 + 输出 + 缓存读取 + 缓存写入', en: 'Total = input + output + cacheRead + cacheWrite' },
   'rightPanel.file': { zh: '文件', en: 'File' },
+  'rightPanel.artifacts': { zh: '产物', en: 'Artifacts' },
+
+  // artifact preview
+  'artifact.previewAria': { zh: '预览 {name}', en: 'Preview {name}' },
+  'artifact.groupAria': { zh: '产物文件', en: 'Artifact files' },
+  'artifact.back': { zh: '返回', en: 'Back' },
+  'artifact.openExternal': { zh: '在外部打开', en: 'Open externally' },
+  'artifact.binaryHint': { zh: '此格式暂不支持内联预览，可点击上方按钮在外部打开。', en: 'This format cannot be previewed inline — use “Open externally” above.' },
+  'artifact.notFound': { zh: '文件不存在或不在工作区内，无法预览。', en: 'The file is missing or outside the workspace — cannot preview.' },
+  'artifact.loadFailed': { zh: '无法读取文件', en: 'Failed to read the file' },
+  'artifact.truncated': { zh: '文件较大，仅显示前 {n} 个字符', en: 'Large file — showing the first {n} characters' },
+  'artifact.kind.text': { zh: '文档', en: 'Document' },
+  'artifact.kind.pdf': { zh: 'PDF', en: 'PDF' },
+  'artifact.kind.video': { zh: '视频', en: 'Video' },
+  'artifact.kind.binary': { zh: '文件', en: 'File' },
 
   // tool call
   'toolcall.args': { zh: '参数', en: 'Arguments' },

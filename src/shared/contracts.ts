@@ -231,6 +231,83 @@ export interface ToolBlock {
   durationMs?: number
   /** Structured tool payload (e.g. subagent results) for GUI-specific rendering. */
   details?: unknown
+  /** Document/video files this tool produced; rendered as clickable preview links. */
+  artifacts?: ArtifactFile[]
+}
+
+/** Previewable artifact produced by the agent during a task. */
+export type ArtifactKind = 'text' | 'pdf' | 'video' | 'binary'
+
+/** A file the agent produced; clickable blue text that opens a sidebar preview. */
+export interface ArtifactFile {
+  /** Canonical absolute path of the artifact. */
+  path: string
+  /** File name for display (basename). */
+  name: string
+  kind: ArtifactKind
+}
+
+/** Payload of the artifact-preview IPC: inline content and/or a renderable URL. */
+export interface ArtifactPreview {
+  path: string
+  name: string
+  kind: ArtifactKind
+  /** UTF-8 text content for text artifacts, bounded (see previewTextLimitChars). */
+  content?: string
+  /** True when content was truncated at the preview bound. */
+  truncated?: boolean
+  /** Internal pi-preview:// URL for video/pdf artifacts (one token per file). */
+  url?: string
+  /** Byte size of the artifact on disk. */
+  size?: number
+}
+
+/**
+ * Extensions whose files count as previewable artifacts (documents and
+ * videos). Lowercase, no dot. Text-ish formats are previewed inline; pdf gets
+ * an embedded viewer; video gets a <video> element; the rest surface as
+ * open-externally entries. Mirrored by the main-process artifact discovery
+ * so renderer link gating and main validation can never drift apart.
+ */
+export const ARTIFACT_EXTENSIONS = [
+  // text documents (inline preview)
+  'md', 'markdown', 'mdx', 'txt', 'text', 'rtf', 'html', 'htm', 'csv', 'json', 'yaml', 'yml', 'xml', 'log', 'ini', 'conf', 'toml', 'svg',
+  // pdf (embedded viewer)
+  'pdf',
+  // videos (inline <video>)
+  'mp4', 'webm', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'm4v', 'ogv', 'mpeg', 'mpg', '3gp',
+  // office/binary documents (open externally)
+  'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'odt', 'ods', 'odp', 'epub',
+] as const
+
+export type ArtifactExtension = (typeof ARTIFACT_EXTENSIONS)[number]
+
+export const ARTIFACT_EXTENSION_SET: ReadonlySet<string> = new Set(ARTIFACT_EXTENSIONS)
+
+/** Maps an artifact file name (or extension) to its preview kind; null = not an artifact. */
+export function artifactKindOf(fileName: string): ArtifactKind | null {
+  const ext = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase() : fileName.toLowerCase()
+  if (!ARTIFACT_EXTENSION_SET.has(ext)) return null
+  if (ext === 'pdf') return 'pdf'
+  if (['mp4', 'webm', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'm4v', 'ogv', 'mpeg', 'mpg', '3gp'].includes(ext)) return 'video'
+  if (['docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'odt', 'ods', 'odp', 'epub', 'rtf'].includes(ext)) return 'binary'
+  return 'text'
+}
+
+/**
+ * True when `href` looks like a local artifact path (relative or absolute,
+ * no scheme) — the Markdown renderer turns such links into clickable preview
+ * text. Main re-validates existence/containment before anything is read.
+ */
+export function isArtifactLinkHref(href: string | undefined | null): href is string {
+  if (!href || href.length < 2 || href.length > 4096) return false
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) {
+    // A drive-letter prefix (C:\...) is a local path, not a scheme.
+    if (!/^[a-zA-Z]:[\\/]/.test(href)) return false
+  }
+  if (href.includes('\\') && !/^[a-zA-Z]:[\\/]/.test(href)) return false
+  const name = href.split(/[\\/]/).pop() ?? ''
+  return artifactKindOf(name) !== null
 }
 export type MessageBlock = TextBlock | ImageBlock | ToolBlock
 export interface ChatMessage {
@@ -546,6 +623,10 @@ export interface PiDesktopApi {
   reloadSession(): Promise<AppSnapshot>
   /** Picks a directory via the native dialog; null when cancelled. Used by group creation. */
   pickDirectory(): Promise<string | null>
+  /** Resolves and loads an artifact (workspace document/video) for inline preview; null when not previewable. */
+  previewArtifact(path: string): Promise<ArtifactPreview | null>
+  /** Opens an artifact with the OS default app (same workspace/extension validation as preview). */
+  openArtifactExternal(path: string): Promise<void>
   /** Creates a session group bound to the given workspace directories. */
   createSessionGroup(name: string, dirs: string[]): Promise<AppSnapshot>
   renameSessionGroup(id: string, name: string): Promise<AppSnapshot>
@@ -625,7 +706,8 @@ export const IPC = {
   runtimeApiKey: 'pi:runtime-api-key', logoutProvider: 'pi:logout-provider', customProvider: 'pi:custom-provider', refreshModels: 'pi:refresh-models',
   renameSession: 'pi:rename-session', compactSession: 'pi:compact-session', copyLastMessage: 'pi:copy-last-message',
   exportSession: 'pi:export-session', sessionStats: 'pi:session-stats', reloadSession: 'pi:reload-session', quitApp: 'pi:quit-app', appInfo: 'pi:app-info',
-  pickDirectory: 'pi:pick-directory', createSessionGroup: 'pi:create-session-group', renameSessionGroup: 'pi:rename-session-group', updateSessionGroup: 'pi:update-session-group', deleteSessionGroup: 'pi:delete-session-group', moveSessionToGroup: 'pi:move-session-to-group',
+  pickDirectory: 'pi:pick-directory', artifactPreview: 'pi:artifact-preview', artifactOpenExternal: 'pi:artifact-open-external',
+  createSessionGroup: 'pi:create-session-group', renameSessionGroup: 'pi:rename-session-group', updateSessionGroup: 'pi:update-session-group', deleteSessionGroup: 'pi:delete-session-group', moveSessionToGroup: 'pi:move-session-to-group',
   dynamicCommands: 'pi:dynamic-commands', extensions: 'pi:extensions', skills: 'pi:skills', testConnection: 'pi:test-connection', providerConfig: 'pi:provider-config', providerTypes: 'pi:provider-types', saveProviderKey: 'pi:save-provider-key',
   setToolApprovalMode: 'pi:set-tool-approval-mode',
   engineStatus: 'pi:engine-status', engineVersions: 'pi:engine-versions', engineInstall: 'pi:engine-install', engineActivate: 'pi:engine-activate', engineUninstall: 'pi:engine-uninstall', engineDeactivate: 'pi:engine-deactivate',

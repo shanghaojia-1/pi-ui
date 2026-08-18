@@ -5,7 +5,9 @@ import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
 import { Check, Copy, TriangleAlert, X } from 'lucide-react'
+import { isArtifactLinkHref } from '@shared/contracts'
 import { useI18n } from '../lib/i18n'
+import { openArtifactPreview } from '../lib/artifacts'
 
 /**
  * Safe Markdown renderer for chat messages.
@@ -179,6 +181,21 @@ function Markdown({ text, className }: MarkdownProps) {
         components={{
           a({ node: _node, href, children, ...rest }) {
             if (!isSafeHref(href)) {
+              // Local document/video paths (relative or absolute, no scheme)
+              // become clickable blue preview text; main re-validates the
+              // path before any file is read.
+              if (isArtifactLinkHref(href)) {
+                return (
+                  <button
+                    type="button"
+                    className="md-link-artifact"
+                    onClick={() => openArtifactPreview(href)}
+                    title={href}
+                  >
+                    {children}
+                  </button>
+                )
+              }
               return (
                 <span className="md-link-disabled" title={t('markdown.blockedLink')}>
                   {children}

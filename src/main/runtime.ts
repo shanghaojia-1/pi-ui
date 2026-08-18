@@ -1,7 +1,8 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, type Dirent } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { lstatSync, realpathSync, unlinkSync, renameSync, readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, readdirSync, statSync, type Dirent } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { BrowserWindow, clipboard, dialog, app, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
+import { BrowserWindow, clipboard, dialog, app, shell, type MessageBoxOptions, type OpenDialogOptions, type SaveDialogOptions } from 'electron'
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -14,17 +15,22 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import { getEngineApi, getEnginePackagePath } from './engine-loader'
 import type {
-  AppError, AppSnapshot, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
+  AppError, AppSnapshot, ArtifactFile, ArtifactKind, ArtifactPreview, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionGroup, SessionGroupsConfig, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   SkillInfo, SkillsInfo, SubagentConfig, SubagentEdit,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
 } from '../shared/contracts'
 import { canonicalizeEvenIfMissing } from './paths'
+import { discoverArtifacts, verifyArtifactCandidate, type ArtifactExistsCache } from './artifacts'
 import { groupIdOf, loadSessionGroups, memberKey, newGroupId, saveSessionGroups } from './session-groups'
 import { UNGROUPED } from '../shared/contracts'
 import { CUSTOM_PROVIDER_APIS, isPlainObject, sanitizeErrorText } from '../shared/contracts'
 
 const EMPTY_USAGE: UsageInfo = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
+/** Artifact text preview bound (characters); larger files are truncated. */
+const PREVIEW_TEXT_LIMIT_CHARS = 500_000
+/** Cap on concurrently streamable pi-preview:// tokens; oldest drops first. */
+const MAX_PREVIEW_TOKENS = 64
 const APPROVAL_TOOLS = new Set(['bash', 'edit', 'write'])
 const SUBAGENT_CONTROL_SYMBOL = Symbol.for('pi-studio.subagent-control')
 
@@ -401,6 +407,18 @@ export class PiRuntime {
    */
   private knownSecrets = new Set<string>()
   private knownSecretsByProvider = new Map<string, Set<string>>()
+  /**
+   * Per-session cache of artifact-path verification (canonical path -> kind
+   * or null). Rebuilt on every session switch so file changes in a new task
+   * are never masked by stale results from the previous one.
+   */
+  private artifactCache: ArtifactExistsCache = new Map()
+  /**
+   * One-time tokens handed out for pi-preview:// URLs. The protocol handler
+   * in main resolves a token back through this map, so the renderer can only
+   * ever stream files that passed the workspace/extension validation here.
+   */
+  private previewTokens = new Map<string, string>()
 
   private get cleanupTimeoutMs(): number { return this.options.cleanupTimeoutMs ?? RUN_CLEANUP_TIMEOUT_MS }
 
@@ -2187,11 +2205,17 @@ export class PiRuntime {
         const previous = this.liveTools.get(id)
         const details = RECORD(event.result) && RECORD(event.result.details) ? event.result.details : null
         const patch = patchOf(details)
+        // Recover the raw args for artifact discovery: tool_execution_start
+        // clipped them into `input` (JSON for object args, raw text otherwise).
+        let rawArgs: unknown
+        try { rawArgs = JSON.parse(previous?.input ?? '') } catch { rawArgs = undefined }
+        const artifacts = this.toolArtifacts(event.toolName, rawArgs, clip(event.result))
         this.liveTools.set(id, {
           type: 'tool', id, name: event.toolName,
           status: event.isError ? 'error' : 'success', input: previous?.input ?? '', output: clip(event.result),
           ...(patch ? { patch } : {}),
           ...(details !== null ? { details } : {}),
+          ...(artifacts !== undefined ? { artifacts } : {}),
         })
         break
       }
@@ -2368,6 +2392,7 @@ export class PiRuntime {
   private toolResultToBlock(message: Record<string, unknown>): ToolBlock {
     const patch = patchOf(message.details)
     const details = RECORD(message.details) ? message.details : null
+    const artifacts = this.toolArtifacts(String(message.toolName), undefined, textOf(message.content))
     return {
       type: 'tool',
       id: String(message.toolCallId),
@@ -2377,6 +2402,7 @@ export class PiRuntime {
       output: textOf(message.content),
       ...(patch ? { patch } : {}),
       ...(details !== null ? { details } : {}),
+      ...(artifacts !== undefined ? { artifacts } : {}),
     }
   }
 
@@ -3045,6 +3071,10 @@ export class PiRuntime {
     this.telemetryRateKind = 'unavailable'
     this.ttftMs = null
     this.latestOutputTokens = null
+    // Session-scoped artifact state: cached verifications and preview tokens
+    // must never leak across sessions.
+    this.artifactCache = new Map()
+    this.previewTokens = new Map()
     if (session) {
       this.markClosing(session)
       try {
@@ -3056,6 +3086,123 @@ export class PiRuntime {
         await this.teardownSession(session, { recordTimeout: true })
       } catch { /* session may be switching away */ }
       session.dispose()
+    }
+  }
+
+  /**
+   * Discovers previewable artifacts (documents/videos) of one tool result,
+   * verifying every candidate on disk and inside the workspace. Returns
+   * undefined when nothing verifies, so ToolBlocks stay untouched.
+   */
+  private toolArtifacts(toolName: string, args: unknown, output: string): ArtifactFile[] | undefined {
+    const workspace = this.workspace
+    if (!workspace) return undefined
+    const files = discoverArtifacts({
+      toolName,
+      args,
+      output,
+      workspacePath: workspace.path,
+      cache: this.artifactCache,
+    })
+    return files.length > 0 ? files : undefined
+  }
+
+  /**
+   * Resolves a preview/open request to a verified artifact in the current
+   * workspace: regular file, previewable extension, canonical path inside the
+   * workspace and outside ignored directories. Returns null on any failure so
+   * no error text (paths included) ever reaches the renderer.
+   */
+  private resolveArtifact(input: string): { path: string; name: string; kind: ArtifactKind } | null {
+    const workspace = this.workspace
+    if (!workspace) return null
+    try {
+      const target = isAbsolute(input) ? input : resolve(workspace.path, input)
+      const canonical = canonicalizeEvenIfMissing(target)
+      if (!existsSync(canonical) || !statSync(canonical).isFile()) return null
+      const workspaceCanonical = canonicalizeEvenIfMissing(workspace.path)
+      if (!this.isInside(canonical, workspaceCanonical)) return null
+      const kind = verifyArtifactCandidate(
+        canonical,
+        workspaceCanonical,
+        // Bypass cache results: the cache only ever holds DISCOVERED paths
+        // (which pass), but a raw user/link path needs full re-verification.
+        new Map(),
+      )?.kind ?? null
+      if (kind === null) return null
+      return { path: canonical, name: basename(canonical), kind }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Loads an artifact for the sidebar preview. Text documents come back as
+   * bounded UTF-8 content; video/pdf artifacts get a one-time pi-preview://
+   * token the main protocol handler can stream; binary documents (docx etc.)
+   * surface as metadata plus an open-externally affordance. Null when the
+   * path is not a verified workspace artifact.
+   */
+  async previewArtifact(input: string): Promise<ArtifactPreview | null> {
+    const resolved = this.resolveArtifact(input)
+    if (resolved === null) return null
+    const { path, name, kind } = resolved
+    const size = statSync(path).size
+    if (kind === 'text') {
+      let content: string | null = null
+      try {
+        content = readFileSync(path, 'utf8')
+      } catch {
+        content = null
+      }
+      // NUL bytes mean the extension lied (a binary pretending to be text).
+      if (content !== null && !content.includes('\u0000')) {
+        const truncated = content.length > PREVIEW_TEXT_LIMIT_CHARS
+        return {
+          path, name, kind,
+          content: truncated ? content.slice(0, PREVIEW_TEXT_LIMIT_CHARS) : content,
+          ...(truncated ? { truncated: true } : {}),
+          size,
+        }
+      }
+      return { path, name, kind: 'binary', size }
+    }
+    if (kind === 'video' || kind === 'pdf') {
+      const token = this.issuePreviewToken(path)
+      return { path, name, kind, size, url: `pi-preview://${token}/${encodeURIComponent(name)}` }
+    }
+    return { path, name, kind, size }
+  }
+
+  /** Hands out a one-time protocol token for a verified artifact path. */
+  private issuePreviewToken(path: string): string {
+    // Bound the token table; drop the oldest entry when full.
+    if (this.previewTokens.size >= MAX_PREVIEW_TOKENS) {
+      const oldest = this.previewTokens.keys().next().value
+      if (oldest !== undefined) this.previewTokens.delete(oldest)
+    }
+    let token: string
+    do {
+      token = randomBytes(12).toString('hex')
+    } while (this.previewTokens.has(token))
+    this.previewTokens.set(token, path)
+    return token
+  }
+
+  /** Resolves a pi-preview:// token to its verified artifact path; null when unknown. */
+  previewTokenPath(token: string): string | null {
+    return this.previewTokens.get(token) ?? null
+  }
+
+  /** Opens a verified artifact with the OS default application. */
+  async openArtifactExternal(input: string): Promise<void> {
+    const resolved = this.resolveArtifact(input)
+    if (resolved === null) return
+    try {
+      const error = await shell.openPath(resolved.path)
+      if (error !== '') throw new Error(error)
+    } catch {
+      // Opening is best-effort; nothing to surface in the snapshot.
     }
   }
 

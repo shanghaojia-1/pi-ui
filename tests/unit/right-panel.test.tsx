@@ -114,3 +114,37 @@ describe('RightPanel tool dedupe by unique instance id', () => {
     expect(html).not.toContain('总处理')
   })
 })
+
+describe('RightPanel artifact preview', () => {
+  it('lists session artifacts as clickable items and shows chips on tool cards', () => {
+    const snapshot: AppSnapshot = {
+      ...base,
+      messages: [
+        {
+          id: 'assistant-0-1', role: 'assistant',
+          blocks: [
+            {
+              type: 'tool', id: 'write-1', name: 'write', status: 'success', input: '{"path":"docs/report.md"}',
+              output: 'wrote docs/report.md',
+              artifacts: [
+                { path: '/tmp/ws/docs/report.md', name: 'report.md', kind: 'text' },
+                { path: '/tmp/ws/out/demo.mp4', name: 'demo.mp4', kind: 'video' },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const html = renderToString(<I18nProvider initialLang="zh"><RightPanel snapshot={snapshot} /></I18nProvider>)
+    // The dedicated artifacts section lists both files with kind labels.
+    expect(html).toContain('产物')
+    expect(html.match(/class="artifact-item"/g)).toHaveLength(2)
+    expect(html).toContain('文档')
+    expect(html).toContain('视频')
+    expect(html).toContain('report.md')
+    // Tool cards render blue clickable chips too.
+    expect(html.match(/class="artifact-chip"/g)).toHaveLength(2)
+    expect(html).toContain('aria-label="预览 report.md"')
+    expect(html).toContain('aria-label="预览 demo.mp4"')
+  })
+})

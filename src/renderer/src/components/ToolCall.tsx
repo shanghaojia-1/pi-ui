@@ -4,6 +4,7 @@ import type { ToolBlock } from '@shared/contracts'
 import { formatDuration } from '../lib/format'
 import { useI18n } from '../lib/i18n'
 import SubagentCard, { isSubagentDetails } from './SubagentCard'
+import ArtifactChips from './ArtifactChips'
 
 const STATUS_META: Record<ToolBlock['status'], { labelKey: string }> = {
   pending: { labelKey: 'toolcall.status.pending' },
@@ -60,6 +61,7 @@ export default function ToolCall({ tool }: { tool: ToolBlock }) {
         ) : null}
         {hasPatch ? <span className="toolcall-patch-badge">patch</span> : null}
       </button>
+      <ArtifactChips artifacts={tool.artifacts} />
       {open && (
         <div className="toolcall-body">
           {hasInput && (
