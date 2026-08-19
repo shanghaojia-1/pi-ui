@@ -134,6 +134,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
   const [thinking, setThinking] = useState<ThinkingLevel>('medium')
   const [compaction, setCompaction] = useState(false)
   const [retry, setRetry] = useState(false)
+  const [notify, setNotify] = useState(false)
   const [timeoutSec, setTimeoutSec] = useState(String(TIMEOUT_MIN_S))
   const [extensionsInfo, setExtensionsInfo] = useState<ExtensionsInfo | null>(null)
   const [skillsInfo, setSkillsInfo] = useState<SkillsInfo | null>(null)
@@ -215,6 +216,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       setThinking(s.defaultThinkingLevel)
       setCompaction(s.compactionEnabled)
       setRetry(s.retryEnabled)
+      setNotify(s.notifyOnCompletion)
       setTimeoutSec(String(Math.round(s.httpIdleTimeoutMs / 1000)))
       setPhase('ready')
     } catch (e) {
@@ -953,6 +955,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
         setThinking(s.defaultThinkingLevel)
         setCompaction(s.compactionEnabled)
         setRetry(s.retryEnabled)
+        setNotify(s.notifyOnCompletion)
         setTimeoutSec(String(Math.round(s.httpIdleTimeoutMs / 1000)))
         setLive({ kind: 'success', text: t('settings.saved') })
       }
@@ -1002,6 +1005,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
     if (thinking !== baseline.defaultThinkingLevel) p.defaultThinkingLevel = thinking
     if (compaction !== baseline.compactionEnabled) p.compactionEnabled = compaction
     if (retry !== baseline.retryEnabled) p.retryEnabled = retry
+    if (notify !== baseline.notifyOnCompletion) p.notifyOnCompletion = notify
     const sec = Number(timeoutSec)
     if (Number.isFinite(sec) && Math.round(sec) * 1000 !== baseline.httpIdleTimeoutMs) {
       p.httpIdleTimeoutMs = Math.round(sec) * 1000
@@ -1016,7 +1020,7 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
       }
     }
     return p
-  }, [baseline, thinking, compaction, retry, timeoutSec, defaultProvider, defaultModel, modelOptions])
+  }, [baseline, thinking, compaction, retry, notify, timeoutSec, defaultProvider, defaultModel, modelOptions])
 
   const dirty = Object.keys(patch).length > 0
   // Current approval policy: the settings snapshot returned by main (never an
@@ -1810,6 +1814,17 @@ export default function SettingsPanel({ snapshot, onClose, initialSection }: Set
                       }}
                     />
                     {t('settings.autoRetry')}
+                  </label>
+                  <label className="sett-toggle">
+                    <input
+                      type="checkbox"
+                      checked={notify}
+                      disabled={anyBusy}
+                      onChange={(e) => {
+                        setNotify(e.target.checked)
+                      }}
+                    />
+                    {t('settings.notifyOnCompletion')}
                   </label>
                 </div>
                 <div className="sett-field">

@@ -180,7 +180,19 @@ beforeEach(() => {
   mocks.getAgentDir.mockReturnValue(agentDir)
   mocks.app.getAppPath.mockReturnValue('/tmp/pi-app')
   mocks.app.getVersion.mockReturnValue('0.1.0')
-  mocks.ModelRuntime.create.mockResolvedValue({ getAvailable: async () => [], getModel: () => null })
+  mocks.ModelRuntime.create.mockResolvedValue({
+    getAvailable: async () => [],
+    getModel: () => null,
+    // Full provider surface so settings snapshots never fall into the catch
+    // branch ('无法读取模型配置') in tests that skip fakeModelRuntime.
+    getProviders: () => [],
+    listCredentials: async () => [],
+    getProviderAuthStatus: () => null,
+    setRuntimeApiKey: async () => {},
+    removeRuntimeApiKey: async () => {},
+    logout: async () => {},
+    refresh: async () => ({ aborted: false, errors: new Map() }),
+  })
   mocks.SessionManager.listAll.mockResolvedValue([])
   mocks.SessionManager.create.mockImplementation((path: string) => ({ getSessionDir: () => path }))
   mocks.SessionManager.open.mockReturnValue({})
@@ -2214,7 +2226,7 @@ describe('settings', () => {
     const settings = await new PiRuntime().getSettings()
     expect(settings).toEqual({
       providers: [], defaultProvider: null, defaultModel: null, defaultThinkingLevel: 'medium',
-      compactionEnabled: false, retryEnabled: false, httpIdleTimeoutMs: 300_000,
+      compactionEnabled: false, retryEnabled: false, httpIdleTimeoutMs: 300_000, notifyOnCompletion: true,
       compaction: { reserveTokens: null, keepRecentTokens: null },
       retry: { maxRetries: null, baseDelayMs: null, maxDelayMs: null },
       keyPersistence: 'runtime-only', toolApprovalMode: 'ask', error: null,
@@ -3066,5 +3078,87 @@ describe('subagent live details passthrough', () => {
     const live = p.liveTools.get('call-1')!
     expect(live.status).toBe('success')
     expect((live.details as { results: Array<{ messages?: unknown }> }).results[0]!.messages).toBeDefined()
+  })
+})
+
+describe('completion notifications', () => {
+  const settle = (p: RuntimePriv): void => {
+    p.handleEvent({ type: 'agent_settled' } as unknown as AgentSessionEvent)
+  }
+
+  class FocusedFakeWindow extends FakeWindow {
+    isFocused(): boolean { return true }
+  }
+
+  async function initNotified(win?: FakeWindow) {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    if (win) runtime.setWindow(win as unknown as BrowserWindow)
+    const notify = vi.fn()
+    const persist = vi.fn().mockResolvedValue(undefined)
+    runtime.setCompletionNotifications({ enabled: true, notify, persist })
+    return { runtime, notify, persist, p: priv(runtime) }
+  }
+
+  it('fires the injected notifier when a run settles and the window is unfocused', async () => {
+    const { runtime, notify, p } = await initNotified()
+    settle(p)
+    await flush()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify).toHaveBeenCalledWith('done')
+    expect(runtime.snapshot().runState).toBe('idle')
+  })
+
+  it('never fires while the main window is focused', async () => {
+    const { notify, p } = await initNotified(new FocusedFakeWindow())
+    settle(p)
+    await flush()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('never fires when the preference is disabled', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const notify = vi.fn()
+    runtime.setCompletionNotifications({ enabled: false, notify, persist: vi.fn().mockResolvedValue(undefined) })
+    settle(priv(runtime))
+    await flush()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('fires with error status when a run fails while unfocused', async () => {
+    const session = new FakeSession()
+    session.promptImpl = () => new Promise((_resolve, reject) => { reject(new Error('llm failed')) })
+    const runtime = await initRuntime(undefined, session)
+    const notify = vi.fn()
+    runtime.setCompletionNotifications({ enabled: true, notify, persist: vi.fn().mockResolvedValue(undefined) })
+    void runtime.prompt('boom')
+    await flush()
+    expect(runtime.snapshot().error?.message).toBe('Run failed')
+    expect(notify).toHaveBeenCalledWith('error')
+  })
+
+  it('updateSettings toggles the preference, persists it and reflects it in the snapshot', async () => {
+    const { runtime, notify, persist, p } = await initNotified()
+    const before = await runtime.getSettings()
+    expect(before.notifyOnCompletion).toBe(true)
+    const after = await runtime.updateSettings({ notifyOnCompletion: false })
+    expect(persist).toHaveBeenCalledWith(false)
+    expect(after.notifyOnCompletion).toBe(false)
+    expect((await runtime.getSettings()).notifyOnCompletion).toBe(false)
+    // The now-disabled preference stops the settle notification too.
+    settle(p)
+    await flush()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('a failed persist surfaces the fixed save error but keeps the in-memory value', async () => {
+    const session = new FakeSession()
+    const runtime = await initRuntime(undefined, session)
+    const persist = vi.fn().mockRejectedValue(new Error('disk full'))
+    runtime.setCompletionNotifications({ enabled: true, notify: vi.fn(), persist })
+    const after = await runtime.updateSettings({ notifyOnCompletion: false })
+    expect(after.notifyOnCompletion).toBe(false)
+    expect(after.error?.message).toBe('保存设置失败')
   })
 })

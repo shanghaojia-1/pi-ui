@@ -1,6 +1,9 @@
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 export type RunState = 'idle' | 'running' | 'retrying' | 'compacting' | 'error'
 
+/** Outcome of a finished agent run, used to pick the completion notification. */
+export type CompletionStatus = 'done' | 'error'
+
 /** Tool approval policy: ask per tool call, or fully managed (auto-approve). */
 export type ToolApprovalMode = 'ask' | 'managed'
 
@@ -366,6 +369,8 @@ export interface SettingsSnapshot {
   compactionEnabled: boolean
   retryEnabled: boolean
   httpIdleTimeoutMs: number
+  /** App-level preference: show a native OS notification when a run completes. */
+  notifyOnCompletion: boolean
   compaction: CompactionConfig
   retry: RetryConfig
   keyPersistence: 'runtime-only'
@@ -381,6 +386,8 @@ export interface SettingsPatch {
   compactionEnabled?: boolean
   retryEnabled?: boolean
   httpIdleTimeoutMs?: number
+  /** App-level preference (persisted by main, not the SDK settings file). */
+  notifyOnCompletion?: boolean
 }
 
 /** Read-only app identity for the about dialog / status bar. */
@@ -873,7 +880,7 @@ export function isHttpIdleTimeoutMs(value: unknown): value is number {
 
 const SETTINGS_PATCH_KEYS = new Set([
   'defaultProvider', 'defaultModel', 'defaultThinkingLevel',
-  'compactionEnabled', 'retryEnabled', 'httpIdleTimeoutMs',
+  'compactionEnabled', 'retryEnabled', 'httpIdleTimeoutMs', 'notifyOnCompletion',
 ])
 
 /** Whitelist-based patch guard: rejects unknown keys and out-of-range values. */
@@ -890,6 +897,7 @@ export function isSettingsPatch(value: unknown): value is SettingsPatch {
   if ('defaultThinkingLevel' in value && !isThinkingLevel(value.defaultThinkingLevel)) return false
   if ('compactionEnabled' in value && typeof value.compactionEnabled !== 'boolean') return false
   if ('retryEnabled' in value && typeof value.retryEnabled !== 'boolean') return false
+  if ('notifyOnCompletion' in value && typeof value.notifyOnCompletion !== 'boolean') return false
   if ('httpIdleTimeoutMs' in value && !isHttpIdleTimeoutMs(value.httpIdleTimeoutMs)) return false
   return true
 }

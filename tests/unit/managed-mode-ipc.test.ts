@@ -43,6 +43,10 @@ const mocks = vi.hoisted(() => {
       getPath: vi.fn(),
       on: vi.fn(),
       quit: vi.fn(),
+      setPath: vi.fn(),
+      setAppUserModelId: vi.fn(),
+      getLocale: vi.fn(() => 'zh-CN'),
+      getVersion: vi.fn(() => '0.0.0-test'),
     },
     BrowserWindow: FakeBrowserWindow,
     ipcMain: { handle: vi.fn() },
@@ -50,6 +54,15 @@ const mocks = vi.hoisted(() => {
     clipboard: { writeText: vi.fn() },
     Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
     shell: { openExternal: vi.fn() },
+    // Artifact streaming + completion notifications: surfaces src/main/index.ts
+    // registers/uses at module top and inside whenReady.
+    protocol: { registerSchemesAsPrivileged: vi.fn(), handle: vi.fn() },
+    net: { fetch: vi.fn() },
+    Notification: class {
+      static isSupported: () => boolean = () => true
+      on: ReturnType<typeof vi.fn> = vi.fn()
+      show: ReturnType<typeof vi.fn> = vi.fn()
+    },
     // SDK surface PiRuntime imports; the boot path only needs these.
     createAgentSession: vi.fn(),
     getAgentDir: vi.fn(),
@@ -70,6 +83,9 @@ vi.mock('electron', () => ({
   clipboard: mocks.clipboard,
   Menu: mocks.Menu,
   shell: mocks.shell,
+  protocol: mocks.protocol,
+  net: mocks.net,
+  Notification: mocks.Notification,
 }))
 
 vi.mock('@earendil-works/pi-coding-agent', () => ({

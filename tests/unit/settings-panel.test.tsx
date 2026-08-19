@@ -14,6 +14,7 @@ function settings(over: Partial<SettingsSnapshot> = {}): SettingsSnapshot {
     compactionEnabled: false,
     retryEnabled: false,
     httpIdleTimeoutMs: 300_000,
+    notifyOnCompletion: true,
     compaction: { reserveTokens: 40_000, keepRecentTokens: 20_000 },
     retry: { maxRetries: 2, baseDelayMs: 2_000, maxDelayMs: 10_000 },
     keyPersistence: 'runtime-only',

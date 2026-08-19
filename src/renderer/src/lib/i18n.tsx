@@ -363,6 +363,7 @@ const DICT: Dict = {
   'settings.defaultThinking': { zh: '默认思考强度', en: 'Default thinking level' },
   'settings.autoCompact': { zh: '自动压缩上下文', en: 'Auto-compact context' },
   'settings.autoRetry': { zh: '自动重试', en: 'Auto-retry' },
+  'settings.notifyOnCompletion': { zh: '任务完成时系统通知', en: 'Notify on task completion' },
   'settings.httpTimeout': { zh: 'HTTP 空闲超时（秒）', en: 'HTTP idle timeout (s)' },
   'settings.timeoutRange': { zh: '范围 {min}–{max} 秒，保存时转换为毫秒', en: 'Range {min}–{max} s; converted to ms on save' },
   'settings.readonly': { zh: '只读设置', en: 'Read-only settings' },

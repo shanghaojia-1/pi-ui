@@ -687,8 +687,11 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await expect(page.getByRole('button', { name: '保存默认设置' })).toBeVisible()
 
     // 2) Toggle both default switches and set the idle timeout (seconds→ms on save).
+    //    Completion notifications default ON; uncheck to prove the app-level
+    //    preference persists through the same updateSettings path.
     await page.getByLabel('自动重试').check()
     await page.getByLabel('自动压缩上下文').check()
+    await page.getByLabel('任务完成时系统通知').uncheck()
     await page.getByLabel('HTTP 空闲超时（秒）').fill('120')
     await page.getByRole('button', { name: '保存默认设置' }).click()
     await expect(page.getByText('默认设置已保存')).toBeVisible()
@@ -697,6 +700,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     const saved = await page.evaluate(() => window.pi.getSettings())
     expect(saved.retryEnabled).toBe(true)
     expect(saved.compactionEnabled).toBe(true)
+    expect(saved.notifyOnCompletion).toBe(false)
     expect(saved.httpIdleTimeoutMs).toBe(120_000)
     expect(saved.keyPersistence).toBe('runtime-only') // keys are never persisted by contract
     // No providers/models exist: the patch must have omitted provider/model
@@ -713,6 +717,7 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await dialog2.getByRole('button', { name: '默认设置', exact: true }).click()
     await expect(page.getByLabel('自动重试')).toBeChecked()
     await expect(page.getByLabel('自动压缩上下文')).toBeChecked()
+    await expect(page.getByLabel('任务完成时系统通知')).not.toBeChecked()
     await expect(page.getByLabel('HTTP 空闲超时（秒）')).toHaveValue('120')
     await page.getByRole('button', { name: '关闭设置' }).click()
 
@@ -721,6 +726,9 @@ test.describe.serial('Pi Studio sandbox (isolated agent dir, no LLM)', () => {
     await expect
       .poll(() => page.evaluate(() => window.pi.getSettings().then((s) => s.retryEnabled)))
       .toBe(true)
+    await expect
+      .poll(() => page.evaluate(() => window.pi.getSettings().then((s) => s.notifyOnCompletion)))
+      .toBe(false)
 
     // 6) This test never runs the agent: no messages, idle state, zero usage.
     const snap = await snapshot()

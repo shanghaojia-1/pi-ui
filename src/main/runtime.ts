@@ -15,7 +15,7 @@ import type {
 } from '@earendil-works/pi-coding-agent'
 import { getEngineApi, getEnginePackagePath } from './engine-loader'
 import type {
-  AppError, AppSnapshot, ArtifactFile, ArtifactKind, ArtifactPreview, ChatMessage, CompactionConfig, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
+  AppError, AppSnapshot, ArtifactFile, ArtifactKind, ArtifactPreview, ChatMessage, CompactionConfig, CompletionStatus, ConnectionTestResult, CustomProviderConfig, CustomProviderApi, DynamicCommand, ExtensionInfo, ExtensionsInfo, ImageAttachment, ImageBlock, MessageBlock, ModelInfo, PackagesInfo,
   ProviderConnectionTest, ProviderEditConfig, ProviderStatus, ProviderTypeInfo, RetryConfig, RunState, SessionGroup, SessionGroupsConfig, SessionListItem, SessionStatsInfo, SettingsPatch, SettingsSnapshot,
   SkillInfo, SkillsInfo, SubagentConfig, SubagentEdit,
   TelemetryInfo, ThinkingLevel, ToolApprovalMode, ToolBlock, UsageInfo, WorkspaceInfo,
@@ -331,6 +331,12 @@ export class PiRuntime {
   private runState: RunState = 'idle'
   private statusText = 'Ready'
   private lastError: AppSnapshot['error'] = null
+  /** App-level completion-notification preference (main persists it). */
+  private completionNotifyEnabled = true
+  /** Injected by main: fires the native notification for a finished run. */
+  private completionNotify: ((status: CompletionStatus) => void) | null = null
+  /** Injected by main: persists the preference back to the app-prefs store. */
+  private persistCompletionNotify: ((enabled: boolean) => Promise<void>) | null = null
   /** Local settings-scope error; lives apart from the run/session lastError. */
   private settingsError: AppError | null = null
   private queueCount = 0
@@ -451,6 +457,22 @@ export class PiRuntime {
     this.emit()
   }
 
+  /**
+   * App-level completion notifications: the enabled flag, the callback that
+   * shows the native toast, and the callback that persists preference changes
+   * (called from updateSettings). Main injects all three once, before the
+   * runtime starts, from the persisted app-prefs store.
+   */
+  setCompletionNotifications(config: {
+    enabled: boolean
+    notify: (status: CompletionStatus) => void
+    persist: (enabled: boolean) => Promise<void>
+  }): void {
+    this.completionNotifyEnabled = config.enabled
+    this.completionNotify = config.notify
+    this.persistCompletionNotify = config.persist
+  }
+
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const run = this.opChain.then(operation, operation)
     this.opChain = run.then(() => undefined, () => undefined)
@@ -469,6 +491,19 @@ export class PiRuntime {
     // A failed turn without a final must never keep partial measurements.
     this.invalidateTelemetry()
     this.flushNow()
+  }
+
+  /**
+   * Fires the injected completion notification — but only when the preference
+   * is on, a notifier is wired, and the main window is not focused (a focused
+   * window needs no toast). Defensive isFocused check keeps unit fakes without
+   * the method on the "unfocused" path.
+   */
+  private maybeNotifyCompletion(status: CompletionStatus): void {
+    if (!this.completionNotifyEnabled || this.completionNotify === null) return
+    const win = this.window
+    if (win && !win.isDestroyed() && typeof win.isFocused === 'function' && win.isFocused()) return
+    this.completionNotify(status)
   }
 
   private isInside(child: string, parent: string): boolean {
@@ -1004,7 +1039,11 @@ export class PiRuntime {
     }
     this.lastError = null
     const fail = (error: unknown): void => {
-      if (this.session === session && this.epoch === epoch) this.recordError('Run failed', error)
+      if (this.session === session && this.epoch === epoch) {
+        this.recordError('Run failed', error)
+        // The user's task ended with an error: tell them while out of focus.
+        this.maybeNotifyCompletion('error')
+      }
     }
     // Attachments become SDK image content parts (base64 payload + mime type).
     const attached: { type: 'image'; data: string; mimeType: string }[] | undefined = images && images.length > 0
@@ -1169,12 +1208,30 @@ export class PiRuntime {
           if (patch.retryEnabled !== undefined) sm.setRetryEnabled(patch.retryEnabled)
           if (patch.httpIdleTimeoutMs !== undefined) sm.setHttpIdleTimeoutMs(patch.httpIdleTimeoutMs)
         }
+        // App-level preference, independent of the SDK settings file: apply in
+        // memory immediately, then persist (best effort) to the app-prefs
+        // store; a persist failure only surfaces the fixed save error (kept
+        // until the SDK drain below — which must not clobber it).
+        if (patch.notifyOnCompletion !== undefined) {
+          this.completionNotifyEnabled = patch.notifyOnCompletion
+          if (this.persistCompletionNotify !== null) {
+            try {
+              await this.persistCompletionNotify(patch.notifyOnCompletion)
+            } catch {
+              this.settingsError = { message: '保存设置失败', recoverable: true }
+            }
+          }
+        }
         try { await sm?.flush() } catch { /* persist failures drain below */ }
         // Persist failures surface as ONE fixed sanitized message: raw errors may
         // embed config paths that lead to keys.
-        this.settingsError = sm && sm.drainErrors().length > 0
-          ? { message: '保存设置失败', recoverable: true }
-          : null
+        if (this.settingsError === null) {
+          this.settingsError = sm && sm.drainErrors().length > 0
+            ? { message: '保存设置失败', recoverable: true }
+            : null
+        } else if (sm) {
+          sm.drainErrors() // keep the app-prefs error over a silent SDK queue
+        }
       } catch {
         // Validation or persistence failures surface as ONE fixed sanitized
         // message: raw errors may embed provider paths or credentials.
@@ -2028,6 +2085,7 @@ export class PiRuntime {
         compactionEnabled: sm.getCompactionEnabled(),
         retryEnabled: sm.getRetryEnabled(),
         httpIdleTimeoutMs: sm.getHttpIdleTimeoutMs(),
+        notifyOnCompletion: this.completionNotifyEnabled,
         compaction: {
           reserveTokens: numberOrNull(sm.getCompactionSettings().reserveTokens),
           keepRecentTokens: numberOrNull(sm.getCompactionSettings().keepRecentTokens),
@@ -2045,6 +2103,7 @@ export class PiRuntime {
         compactionEnabled: false,
         retryEnabled: false,
         httpIdleTimeoutMs: DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+        notifyOnCompletion: this.completionNotifyEnabled,
         compaction: { reserveTokens: null, keepRecentTokens: null } as CompactionConfig,
         retry: { maxRetries: null, baseDelayMs: null, maxDelayMs: null } as RetryConfig,
       }
@@ -2063,6 +2122,7 @@ export class PiRuntime {
         compactionEnabled: false,
         retryEnabled: false,
         httpIdleTimeoutMs: DEFAULT_HTTP_IDLE_TIMEOUT_MS,
+        notifyOnCompletion: this.completionNotifyEnabled,
         compaction: { reserveTokens: null, keepRecentTokens: null } as CompactionConfig,
         retry: { maxRetries: null, baseDelayMs: null, maxDelayMs: null } as RetryConfig,
         keyPersistence: 'runtime-only',
@@ -2136,6 +2196,8 @@ export class PiRuntime {
         // serialize rebuild purely from the persisted results.
         this.clearLiveState()
         this.runState = 'idle'; this.statusText = 'Ready'; this.queueCount = 0
+        // A queued turn settled: notify while the window is out of focus.
+        this.maybeNotifyCompletion('done')
         const session = this.session
         const epoch = this.epoch
         void this.refreshSessions().catch((error) => {

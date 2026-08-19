@@ -1,16 +1,23 @@
 import { dirname, join } from 'node:path'
 import { delimiter } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, protocol, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
-import { IPC, isApiKey, isCustomProviderConfig, isDingtalkConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type DingtalkConfig, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, protocol, shell, type IpcMainInvokeEvent, type MessageBoxOptions, type WebContents } from 'electron'
+import { IPC, isApiKey, isCustomProviderConfig, isDingtalkConfig, isEngineVersion, isGroupDirs, isImageAttachments, isPackageSource, isProviderConnectionTest, isProviderName, isSessionGroupName, isSettingsPatch, isThinkingLevel, isToolApprovalMode, type AppInfo, type CompletionStatus, type DingtalkConfig, type ImageAttachment, type SettingsSnapshot, type SubagentEdit } from '../shared/contracts'
 import { buildContextMenu, safeExternalUrl } from './context-menu'
+import { AppPrefsStore } from './app-prefs'
 import { DingtalkBridge } from './dingtalk'
 import { activateEngineVersion, deactivateEngine, findNpm, getEngineApi, getEngineStatus, installEngineVersion, listRegistryVersions, loadEngineApi, uninstallEngineVersion } from './engine-loader'
 import { ManagedModeStore } from './managed-mode'
+import { completionNotificationText, showCompletionNotification } from './notifications'
 import { PiRuntime } from './runtime'
 import { windowOptionsForPlatform } from './window-options'
 
 const runtime = new PiRuntime()
+
+// Windows toast notifications require a stable AppUserModelID; without it
+// the OS may silently drop or mislabel the toasts. Set it before any
+// notification can fire (harmless no-op on macOS/Linux).
+if (process.platform === 'win32') app.setAppUserModelId('com.pi.studio')
 
 // Internal scheme for artifact (video/pdf) streaming. Tokens are issued by
 // the runtime only for workspace files that passed artifact validation, so
@@ -25,6 +32,8 @@ let runtimeInitialized = false
 let runtimeInitialization: Promise<boolean> | null = null
 /** Persisted tool-approval policy; loaded before runtime.initialize and injected into the runtime. */
 let managedModeStore: ManagedModeStore | null = null
+/** Persisted app-level preferences (completion notifications); loaded in whenReady. */
+let appPrefsStore: AppPrefsStore | null = null
 /** DingTalk robot bridge; created inside whenReady so userData is redirected first. */
 let dingtalkBridge: DingtalkBridge | null = null
 
@@ -196,6 +205,28 @@ app.whenReady().then(async () => {
   managedModeStore = new ManagedModeStore(app.getPath('userData'))
   try { await managedModeStore.load() } catch { /* load failure stays 'ask' */ }
   runtime.setToolApprovalMode(managedModeStore.getMode())
+  // App-level preferences (completion notifications): load the persisted
+  // store BEFORE the runtime starts so the first settled run already honors
+  // the user's choice; defaults are on (the toast fires only when the main
+  // window is out of focus).
+  appPrefsStore = new AppPrefsStore(app.getPath('userData'))
+  try { await appPrefsStore.load() } catch { /* load failure keeps the defaults */ }
+  runtime.setCompletionNotifications({
+    enabled: appPrefsStore.get().notifyOnCompletion,
+    persist: (enabled) => appPrefsStore!.setEnabled(enabled),
+    notify: (status: CompletionStatus) => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) return
+      const lang: 'zh' | 'en' = app.getLocale().toLowerCase().startsWith('zh') ? 'zh' : 'en'
+      const { title, body } = completionNotificationText(lang, status)
+      showCompletionNotification(title, body, () => {
+        if (win.isDestroyed()) return
+        if (win.isMinimized()) win.restore()
+        if (!win.isVisible()) win.show()
+        win.focus()
+      })
+    },
+  })
   // DingTalk robot bridge: load persisted config, push status changes to the
   // renderer, and auto-connect when the feature was left enabled.
   dingtalkBridge = new DingtalkBridge(runtime, app.getPath('userData'))
